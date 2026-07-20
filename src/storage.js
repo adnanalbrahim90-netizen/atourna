@@ -11,15 +11,38 @@
 
 import { createClient } from "@supabase/supabase-js";
 
-const SUPABASE_URL = import.meta.env.VITE_SUPABASE_URL;
-const SUPABASE_ANON_KEY = import.meta.env.VITE_SUPABASE_ANON_KEY;
+const SUPABASE_URL = (import.meta.env.VITE_SUPABASE_URL || "").trim();
+const SUPABASE_ANON_KEY = (import.meta.env.VITE_SUPABASE_ANON_KEY || "").trim();
 
-const supabase =
-  SUPABASE_URL && SUPABASE_ANON_KEY ? createClient(SUPABASE_URL, SUPABASE_ANON_KEY) : null;
+function isValidHttpUrl(value) {
+  try {
+    const u = new URL(value);
+    return u.protocol === "http:" || u.protocol === "https:";
+  } catch {
+    return false;
+  }
+}
+
+let supabase = null;
+
+if (SUPABASE_URL && SUPABASE_ANON_KEY) {
+  if (isValidHttpUrl(SUPABASE_URL)) {
+    try {
+      supabase = createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+    } catch (e) {
+      console.error("[عطورنا] فشل الاتصال بـ Supabase، سيتم استخدام التخزين المحلي:", e.message);
+      supabase = null;
+    }
+  } else {
+    console.error(
+      `[عطورنا] قيمة VITE_SUPABASE_URL غير صالحة كرابط ("${SUPABASE_URL}"). تأكد أنها تبدأ بـ https:// ولم يتم عكسها مع anon key. سيتم استخدام التخزين المحلي مؤقتاً.`
+    );
+  }
+}
 
 if (!supabase) {
   console.warn(
-    "[عطورنا] لم يتم ضبط بيانات Supabase — سيتم استخدام تخزين محلي (localStorage) بدون مزامنة بين الأجهزة. راجع ملف .env.example."
+    "[عطورنا] لم يتم ضبط بيانات Supabase بشكل صحيح — سيتم استخدام تخزين محلي (localStorage) بدون مزامنة بين الأجهزة. راجع ملف .env.example."
   );
 }
 
