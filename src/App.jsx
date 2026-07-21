@@ -92,11 +92,11 @@ function PerfumeMark({ size = 40 }) {
       <defs>
         <linearGradient id="capGrad" x1="0" y1="0" x2="1" y2="1">
           <stop offset="0%" stopColor="#D8B978" />
-          <stop offset="100%" stopColor="#B8894A" />
+          <stop offset="100%" style={{ stopColor: "var(--accent)" }} />
         </linearGradient>
         <linearGradient id="bottleGrad" x1="0" y1="0" x2="0" y2="1">
           <stop offset="0%" stopColor="#7A4B63" />
-          <stop offset="100%" stopColor="#5B2333" />
+          <stop offset="100%" style={{ stopColor: "var(--accent-dark)" }} />
         </linearGradient>
       </defs>
       <rect x="24" y="6" width="16" height="10" rx="2" fill="url(#capGrad)" />
@@ -113,9 +113,9 @@ function PerfumeMark({ size = 40 }) {
 function Btn({ children, variant = "primary", className = "", ...props }) {
   const base = "inline-flex items-center justify-center gap-1.5 rounded-xl px-4 py-2.5 text-sm font-semibold transition active:scale-[0.98] disabled:opacity-50 disabled:pointer-events-none";
   const variants = {
-    primary: "bg-[#B8894A] text-white hover:bg-[#a67a3e] shadow-sm shadow-[#B8894A]/30",
-    dark: "bg-[#5B2333] text-white hover:bg-[#4a1c29] shadow-sm",
-    ghost: "bg-[var(--surface-3)] text-[#5B2333] hover:bg-[var(--border)]",
+    primary: "bg-[var(--accent)] text-white hover:brightness-95 shadow-sm",
+    dark: "bg-[var(--accent-dark)] text-white hover:brightness-90 shadow-sm",
+    ghost: "bg-[var(--surface-3)] text-[var(--accent-dark)] hover:bg-[var(--border)]",
     outline: "border border-[var(--border)] text-[var(--text)] hover:bg-[var(--surface-2)]",
     danger: "bg-[#B23A3A] text-white hover:bg-[#9c3131]",
   };
@@ -143,7 +143,7 @@ function Field({ label, children }) {
   );
 }
 
-const inputCls = "w-full rounded-xl border border-[var(--border)] bg-[var(--input-bg)] px-3 py-2.5 text-sm text-[var(--text)] outline-none focus:ring-2 focus:ring-[#B8894A]/40 focus:border-[#B8894A]";
+const inputCls = "w-full rounded-xl border border-[var(--border)] bg-[var(--input-bg)] px-3 py-2.5 text-sm text-[var(--text)] outline-none focus:ring-2 focus:ring-[var(--accent)]/40 focus:border-[var(--accent)]";
 
 /* ---------------------------------- Login ---------------------------------- */
 
@@ -171,7 +171,7 @@ function LoginScreen({ users, onLogin }) {
       <div className="w-full max-w-sm">
         <div className="flex flex-col items-center mb-8">
           <PerfumeMark size={64} />
-          <h1 className="mt-3 text-3xl font-bold text-[#5B2333]" style={{ fontFamily: "'Amiri', serif" }}>
+          <h1 className="mt-3 text-3xl font-bold text-[var(--accent-dark)]" style={{ fontFamily: "'Amiri', serif" }}>
             عطورنا
           </h1>
           <p className="text-[#8A7B6C] text-sm mt-1">نظام إدارة مبيعات العطور والبخور</p>
@@ -234,7 +234,7 @@ export default function App() {
   const [products, setProducts] = useState([]);
   const [sales, setSales] = useState([]);
   const [seq, setSeq] = useState({});
-  const [settings, setSettings] = useState({ companyName: "عطورنا للعطور والبخور", logo: "", phone: "", address: "" });
+  const [settings, setSettings] = useState({ companyName: "عطورنا للعطور والبخور", logo: "", phone: "", address: "", theme: "classic" });
   const [currentUser, setCurrentUser] = useState(null);
   const [view, setView] = useState("dashboard");
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
@@ -256,7 +256,7 @@ export default function App() {
     const p = await storeGet("perfume_products", []);
     const s = await storeGet("perfume_sales", []);
     const sq = await storeGet("perfume_seq", {});
-    const st = await storeGet("perfume_settings", { companyName: "عطورنا للعطور والبخور", logo: "", phone: "", address: "" });
+    const st = await storeGet("perfume_settings", { companyName: "عطورنا للعطور والبخور", logo: "", phone: "", address: "", theme: "classic" });
 
     const snapshot = JSON.stringify({ u, p, s, sq, st });
     if (snapshot === lastSnapshot.current) return; // nothing new, avoid needless re-render
@@ -294,6 +294,10 @@ export default function App() {
   useEffect(() => {
     document.documentElement.classList.toggle("dark", darkMode);
   }, [darkMode]);
+
+  useEffect(() => {
+    document.documentElement.setAttribute("data-theme", settings.theme || "classic");
+  }, [settings.theme]);
 
   const toggleDarkMode = () => {
     setDarkMode((d) => {
@@ -399,11 +403,11 @@ export default function App() {
       <header className="no-print sticky top-0 z-30 bg-[var(--bg)]/95 backdrop-blur border-b border-[var(--border)]">
         <div className="max-w-6xl mx-auto flex items-center justify-between px-4 py-3">
           <div className="flex items-center gap-2">
-            <button className="md:hidden p-2 -mr-2 text-[#5B2333]" onClick={() => setMobileNavOpen(true)}>
+            <button className="md:hidden p-2 -mr-2 text-[var(--accent-dark)]" onClick={() => setMobileNavOpen(true)}>
               <Menu size={22} />
             </button>
             <PerfumeMark size={32} />
-            <span className="font-bold text-[#5B2333] text-lg" style={{ fontFamily: "'Amiri', serif" }}>
+            <span className="font-bold text-[var(--accent-dark)] text-lg" style={{ fontFamily: "'Amiri', serif" }}>
               {settings.companyName || "عطورنا"}
             </span>
           </div>
@@ -414,7 +418,7 @@ export default function App() {
             </div>
             <button
               onClick={toggleDarkMode}
-              className="p-2 rounded-lg text-[#B8894A] hover:bg-[var(--surface-3)]"
+              className="p-2 rounded-lg text-[var(--accent)] hover:bg-[var(--surface-3)]"
               title={darkMode ? "الوضع الفاتح" : "الوضع الداكن"}
             >
               {darkMode ? <Sun size={20} /> : <Moon size={20} />}
@@ -446,7 +450,7 @@ export default function App() {
               <div className="flex items-center justify-between px-2 py-2 mb-2">
                 <div className="flex items-center gap-2">
                   <PerfumeMark size={28} />
-                  <span className="font-bold text-[#5B2333]" style={{ fontFamily: "'Amiri', serif" }}>عطورنا</span>
+                  <span className="font-bold text-[var(--accent-dark)]" style={{ fontFamily: "'Amiri', serif" }}>عطورنا</span>
                 </div>
                 <button onClick={() => setMobileNavOpen(false)} className="p-1 text-[var(--muted)]">
                   <X size={20} />
@@ -560,7 +564,7 @@ export default function App() {
             <button
               key={n.key}
               onClick={() => setView(n.key)}
-              className={`flex flex-col items-center gap-0.5 px-2 py-1.5 rounded-lg text-[10px] font-semibold ${active ? "text-[#B8894A]" : "text-[#8A7B6C]"}`}
+              className={`flex flex-col items-center gap-0.5 px-2 py-1.5 rounded-lg text-[10px] font-semibold ${active ? "text-[var(--accent)]" : "text-[var(--muted)]"}`}
             >
               <Icon size={20} />
               {n.label}
@@ -586,7 +590,7 @@ function NavBtn({ item, active, onClick }) {
     <button
       onClick={onClick}
       className={`flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-sm font-semibold text-right transition ${
-        active ? "bg-[#5B2333] text-white" : "text-[var(--text)] hover:bg-[var(--surface-3)]"
+        active ? "bg-[var(--accent-dark)] text-white" : "text-[var(--text)] hover:bg-[var(--surface-3)]"
       }`}
     >
       <Icon size={18} />
@@ -610,6 +614,8 @@ function GlobalStyle() {
         --text: #2B211A;
         --muted: #8A7B6C;
         --input-bg: #FBF9F5;
+        --accent: #B8894A;
+        --accent-dark: #5B2333;
       }
       html.dark {
         --bg: #16110F;
@@ -621,6 +627,12 @@ function GlobalStyle() {
         --muted: #C2AC9B;
         --input-bg: #291F1C;
       }
+      html[data-theme="emerald"] { --accent: #2F8F6B; --accent-dark: #124430; }
+      html[data-theme="rose"] { --accent: #C2547E; --accent-dark: #6B1F3A; }
+      html[data-theme="sapphire"] { --accent: #3B6EA8; --accent-dark: #16324F; }
+      html[data-theme="violet"] { --accent: #7B5EA8; --accent-dark: #3E2A5C; }
+      html[data-theme="amber"] { --accent: #C97B3D; --accent-dark: #7A3E1D; }
+
       html, body { background: var(--bg); }
       body { color: var(--text); transition: background-color .2s ease, color .2s ease; }
 
@@ -653,8 +665,8 @@ function Dashboard({ sales, products, currentUser, setView }) {
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <StatCard label="عدد الفواتير" value={mySales.length} color="#5B2333" />
-        <StatCard label="إجمالي المبيعات" value={fmt(totalRevenue) + " د.ك"} color="#B8894A" />
+        <StatCard label="عدد الفواتير" value={mySales.length} color="var(--accent-dark)" />
+        <StatCard label="إجمالي المبيعات" value={fmt(totalRevenue) + " د.ك"} color="var(--accent)" />
         <StatCard label="المحصل" value={fmt(totalCollected) + " د.ك"} color="#3F7D57" />
         <StatCard label="المتبقي" value={fmt(totalRemaining) + " د.ك"} color="#B23A3A" />
       </div>
@@ -672,12 +684,12 @@ function Dashboard({ sales, products, currentUser, setView }) {
                     <p className="font-semibold">{s.invoiceNo}</p>
                     <p className="text-xs text-[#8A7B6C]">{s.sellerName} · {dateLabel(s.date)}</p>
                   </div>
-                  <p className="font-bold text-[#B8894A]">{fmt(s.total)} د.ك</p>
+                  <p className="font-bold text-[var(--accent)]">{fmt(s.total)} د.ك</p>
                 </div>
               ))}
             </div>
           )}
-          <button onClick={() => setView("newsale")} className="mt-3 text-sm font-semibold text-[#B8894A] flex items-center gap-1">
+          <button onClick={() => setView("newsale")} className="mt-3 text-sm font-semibold text-[var(--accent)] flex items-center gap-1">
             <Plus size={16} /> تسجيل عملية بيع جديدة
           </button>
         </Card>
@@ -763,10 +775,9 @@ function NewSale({ products, users, currentUser, sales, seq, onCreate }) {
       const used = cart.filter((c) => c.productId === p.id).reduce((a, c) => a + c.qty, 0);
       return used ? { ...p, stock: p.stock - used } : p;
     });
-    const key = seller.name;
-    const nextNum = (seq[key] || 0) + 1;
-    const newSeq = { ...seq, [key]: nextNum };
-    const invoiceNo = `${seller.name.replace(/\s+/g, "").slice(0, 4).toUpperCase()}-${String(nextNum).padStart(4, "0")}`;
+    const nextNum = (seq.count || 0) + 1;
+    const newSeq = { ...seq, count: nextNum };
+    const invoiceNo = `INV-${String(nextNum).padStart(5, "0")}`;
     const sale = {
       id: uid(),
       invoiceNo,
@@ -834,7 +845,7 @@ function NewSale({ products, users, currentUser, sales, seq, onCreate }) {
                   <p className="text-xs text-[#8A7B6C]">{l.qty} × {fmt(l.price)} د.ك</p>
                 </div>
                 <div className="flex items-center gap-3">
-                  <p className="font-bold text-[#B8894A]">{fmt(l.total)} د.ك</p>
+                  <p className="font-bold text-[var(--accent)]">{fmt(l.total)} د.ك</p>
                   <button onClick={() => removeLine(l.lineId)} className="text-[#B23A3A]"><Trash2 size={16} /></button>
                 </div>
               </div>
@@ -957,7 +968,7 @@ function SalesRecords({ sales, users, currentUser, isAdmin, onDelete, onPrintInv
                     <p className="font-bold">{s.invoiceNo}</p>
                     <p className="text-xs text-[var(--muted)]">{s.sellerName} · {dateLabel(s.date)} {timeLabel(s.date)}</p>
                   </div>
-                  <p className="font-extrabold text-[#B8894A]">{fmt(s.total)} د.ك</p>
+                  <p className="font-extrabold text-[var(--accent)]">{fmt(s.total)} د.ك</p>
                 </div>
                 <div className="text-xs text-[var(--muted)] mb-2">{s.items.map((i) => i.name).join("، ")}</div>
                 <div className="flex justify-between text-xs mb-3">
@@ -975,7 +986,7 @@ function SalesRecords({ sales, users, currentUser, isAdmin, onDelete, onPrintInv
                   )}
                   {isAdmin && (
                     <>
-                      <button onClick={() => onEditSale(s)} className="p-2.5 rounded-xl bg-[var(--surface-3)] text-[#5B2333]"><Pencil size={16} /></button>
+                      <button onClick={() => onEditSale(s)} className="p-2.5 rounded-xl bg-[var(--surface-3)] text-[var(--accent-dark)]"><Pencil size={16} /></button>
                       <button onClick={() => onDelete(s.id)} className="p-2.5 rounded-xl bg-[#FBEAEA] text-[#B23A3A]"><Trash2 size={16} /></button>
                     </>
                   )}
@@ -1008,18 +1019,18 @@ function SalesRecords({ sales, users, currentUser, isAdmin, onDelete, onPrintInv
                       <td className="px-4 py-3">{s.sellerName}</td>
                       <td className="px-4 py-3 text-[var(--muted)]">{dateLabel(s.date)}</td>
                       <td className="px-4 py-3 text-[var(--muted)] max-w-[220px] truncate">{s.items.map((i) => i.name).join("، ")}</td>
-                      <td className="px-4 py-3 font-bold text-[#B8894A]">{fmt(s.total)}</td>
+                      <td className="px-4 py-3 font-bold text-[var(--accent)]">{fmt(s.total)}</td>
                       <td className="px-4 py-3 text-[#3F7D57] font-semibold">{fmt(s.collected)}</td>
                       <td className="px-4 py-3 text-[#B23A3A] font-semibold">{fmt(s.remaining)}</td>
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-2">
-                          <button onClick={() => onPrintInvoice(s)} className="p-1.5 rounded-lg text-[#5B2333] hover:bg-[var(--surface-3)]" title="طباعة"><Printer size={16} /></button>
+                          <button onClick={() => onPrintInvoice(s)} className="p-1.5 rounded-lg text-[var(--accent-dark)] hover:bg-[var(--surface-3)]" title="طباعة"><Printer size={16} /></button>
                           {s.remaining > 0 && (
                             <button onClick={() => { setPayingId(payingId === s.id ? null : s.id); setPayAmount(""); }} className="p-1.5 rounded-lg text-[#3F7D57] hover:bg-[var(--surface-3)]" title="تسجيل تحصيل"><Wallet size={16} /></button>
                           )}
                           {isAdmin && (
                             <>
-                              <button onClick={() => onEditSale(s)} className="p-1.5 rounded-lg text-[#5B2333] hover:bg-[var(--surface-3)]" title="تعديل"><Pencil size={16} /></button>
+                              <button onClick={() => onEditSale(s)} className="p-1.5 rounded-lg text-[var(--accent-dark)] hover:bg-[var(--surface-3)]" title="تعديل"><Pencil size={16} /></button>
                               <button onClick={() => onDelete(s.id)} className="p-1.5 rounded-lg text-[#B23A3A] hover:bg-[#FBEAEA]" title="حذف"><Trash2 size={16} /></button>
                             </>
                           )}
@@ -1089,8 +1100,8 @@ function Stats({ sales, users, currentUser, isAdmin }) {
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <StatCard label="عدد الفواتير" value={list.length} color="#5B2333" />
-        <StatCard label="إجمالي المبيعات" value={fmt(totalRevenue) + " د.ك"} color="#B8894A" />
+        <StatCard label="عدد الفواتير" value={list.length} color="var(--accent-dark)" />
+        <StatCard label="إجمالي المبيعات" value={fmt(totalRevenue) + " د.ك"} color="var(--accent)" />
         <StatCard label="المحصل" value={fmt(totalCollected) + " د.ك"} color="#3F7D57" />
         <StatCard label="المتبقي" value={fmt(totalRemaining) + " د.ك"} color="#B23A3A" />
       </div>
@@ -1105,7 +1116,7 @@ function Stats({ sales, users, currentUser, isAdmin }) {
                 <XAxis dataKey="name" tick={{ fontSize: 12 }} />
                 <YAxis tick={{ fontSize: 12 }} />
                 <Tooltip formatter={(v) => fmt(v) + " د.ك"} />
-                <Bar dataKey="total" fill="#B8894A" radius={[6, 6, 0, 0]} />
+                <Bar dataKey="total" fill="var(--accent)" radius={[6, 6, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
           </div>
@@ -1192,7 +1203,7 @@ function Inventory({ products, isAdmin, onSave }) {
               </p>
               {isAdmin && (
                 <div className="flex gap-2 mt-3">
-                  <button onClick={() => startEdit(p)} className="text-xs font-semibold text-[#5B2333] bg-[#F7F1E6] rounded-lg px-3 py-1.5">تعديل</button>
+                  <button onClick={() => startEdit(p)} className="text-xs font-semibold text-[var(--accent-dark)] bg-[var(--surface-3)] rounded-lg px-3 py-1.5">تعديل</button>
                   <button onClick={() => onSave(products.filter((x) => x.id !== p.id))} className="text-xs font-semibold text-[#B23A3A] bg-[#FBEAEA] rounded-lg px-3 py-1.5">حذف</button>
                 </div>
               )}
@@ -1208,12 +1219,26 @@ function Inventory({ products, isAdmin, onSave }) {
 
 function UsersAdmin({ users, onSave }) {
   const [form, setForm] = useState({ username: "", password: "", name: "", role: "seller" });
+  const [editingId, setEditingId] = useState(null);
+  const [editForm, setEditForm] = useState({ username: "", password: "", name: "", role: "seller" });
 
   const submit = () => {
     if (!form.username || !form.password || !form.name) return;
     if (users.some((u) => u.username.toLowerCase() === form.username.toLowerCase())) return;
     onSave([...users, { id: uid(), ...form }]);
     setForm({ username: "", password: "", name: "", role: "seller" });
+  };
+
+  const startEdit = (u) => {
+    setEditingId(u.id);
+    setEditForm({ username: u.username, password: u.password, name: u.name, role: u.role });
+  };
+
+  const saveEdit = (id) => {
+    if (!editForm.username || !editForm.password || !editForm.name) return;
+    if (users.some((u) => u.id !== id && u.username.toLowerCase() === editForm.username.toLowerCase())) return;
+    onSave(users.map((u) => (u.id === id ? { ...u, ...editForm } : u)));
+    setEditingId(null);
   };
 
   return (
@@ -1238,13 +1263,38 @@ function UsersAdmin({ users, onSave }) {
 
       <div className="space-y-2">
         {users.map((u) => (
-          <Card key={u.id} className="p-4 flex items-center justify-between">
-            <div>
-              <p className="font-bold">{u.name} <span className="text-xs font-normal text-[#8A7B6C]">({u.username})</span></p>
-              <p className="text-xs text-[#8A7B6C]">{u.role === "admin" ? "مدير" : "بائع"}</p>
-            </div>
-            {users.length > 1 && (
-              <button onClick={() => onSave(users.filter((x) => x.id !== u.id))} className="p-2 rounded-lg text-[#B23A3A] hover:bg-[#FBEAEA]"><Trash2 size={16} /></button>
+          <Card key={u.id} className="p-4">
+            {editingId === u.id ? (
+              <div className="space-y-3">
+                <div className="grid grid-cols-2 gap-3">
+                  <Field label="الاسم"><input className={inputCls} value={editForm.name} onChange={(e) => setEditForm({ ...editForm, name: e.target.value })} /></Field>
+                  <Field label="الدور">
+                    <select className={inputCls} value={editForm.role} onChange={(e) => setEditForm({ ...editForm, role: e.target.value })}>
+                      <option value="seller">بائع</option>
+                      <option value="admin">مدير</option>
+                    </select>
+                  </Field>
+                  <Field label="اسم المستخدم"><input className={inputCls} value={editForm.username} onChange={(e) => setEditForm({ ...editForm, username: e.target.value })} /></Field>
+                  <Field label="كلمة المرور"><input className={inputCls} value={editForm.password} onChange={(e) => setEditForm({ ...editForm, password: e.target.value })} /></Field>
+                </div>
+                <div className="flex gap-2">
+                  <Btn onClick={() => saveEdit(u.id)}><Save size={16} /> حفظ</Btn>
+                  <Btn variant="outline" onClick={() => setEditingId(null)}>إلغاء</Btn>
+                </div>
+              </div>
+            ) : (
+              <div className="flex items-center justify-between">
+                <div>
+                  <p className="font-bold">{u.name} <span className="text-xs font-normal text-[var(--muted)]">({u.username})</span></p>
+                  <p className="text-xs text-[var(--muted)]">{u.role === "admin" ? "مدير" : "بائع"}</p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <button onClick={() => startEdit(u)} className="p-2 rounded-lg text-[var(--accent-dark)] hover:bg-[var(--surface-3)]"><Pencil size={16} /></button>
+                  {users.length > 1 && (
+                    <button onClick={() => onSave(users.filter((x) => x.id !== u.id))} className="p-2 rounded-lg text-[#B23A3A] hover:bg-[#FBEAEA]"><Trash2 size={16} /></button>
+                  )}
+                </div>
+              </div>
             )}
           </Card>
         ))}
@@ -1258,6 +1308,15 @@ function UsersAdmin({ users, onSave }) {
 function SettingsPage({ settings, onSave }) {
   const [form, setForm] = useState(settings);
   const fileRef = useRef(null);
+
+  const THEMES = [
+    { key: "classic", label: "ذهبي عنّابي", accent: "#B8894A", dark: "#5B2333" },
+    { key: "emerald", label: "زمردي", accent: "#2F8F6B", dark: "#124430" },
+    { key: "rose", label: "وردي", accent: "#C2547E", dark: "#6B1F3A" },
+    { key: "sapphire", label: "سماوي", accent: "#3B6EA8", dark: "#16324F" },
+    { key: "violet", label: "بنفسجي", accent: "#7B5EA8", dark: "#3E2A5C" },
+    { key: "amber", label: "كهرماني", accent: "#C97B3D", dark: "#7A3E1D" },
+  ];
 
   const handleLogo = (e) => {
     const file = e.target.files?.[0];
@@ -1281,12 +1340,12 @@ function SettingsPage({ settings, onSave }) {
           <input className={inputCls} value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} />
         </Field>
         <div>
-          <span className="block text-xs font-semibold text-[#8A7B6C] mb-2">شعار الشركة (Logo)</span>
+          <span className="block text-xs font-semibold text-[var(--muted)] mb-2">شعار الشركة (Logo)</span>
           <div className="flex items-center gap-3">
             {form.logo ? (
-              <img src={form.logo} alt="logo" className="w-16 h-16 rounded-xl object-cover border border-[#E3D6BE]" />
+              <img src={form.logo} alt="logo" className="w-16 h-16 rounded-xl object-cover border border-[var(--border)]" />
             ) : (
-              <div className="w-16 h-16 rounded-xl bg-[#FBF9F5] border border-dashed border-[#E3D6BE] flex items-center justify-center text-[#B8AFA0]">
+              <div className="w-16 h-16 rounded-xl bg-[var(--surface-2)] border border-dashed border-[var(--border)] flex items-center justify-center text-[var(--muted)]">
                 <ImageIcon size={22} />
               </div>
             )}
@@ -1295,9 +1354,33 @@ function SettingsPage({ settings, onSave }) {
             {form.logo && <Btn variant="ghost" onClick={() => setForm({ ...form, logo: "" })}>إزالة</Btn>}
           </div>
         </div>
+
+        <div>
+          <span className="block text-xs font-semibold text-[var(--muted)] mb-2">ثيم ألوان الموقع</span>
+          <div className="grid grid-cols-3 gap-2">
+            {THEMES.map((t) => (
+              <button
+                key={t.key}
+                type="button"
+                onClick={() => setForm({ ...form, theme: t.key })}
+                className={`rounded-xl border-2 p-2.5 flex flex-col items-center gap-1.5 transition ${
+                  (form.theme || "classic") === t.key ? "border-[var(--accent)]" : "border-transparent"
+                }`}
+                style={{ background: "var(--surface-2)" }}
+              >
+                <span className="flex gap-1">
+                  <span className="w-5 h-5 rounded-full" style={{ background: t.accent }} />
+                  <span className="w-5 h-5 rounded-full" style={{ background: t.dark }} />
+                </span>
+                <span className="text-[11px] font-semibold">{t.label}</span>
+              </button>
+            ))}
+          </div>
+        </div>
+
         <Btn onClick={() => onSave(form)} className="w-full"><Save size={16} /> حفظ الإعدادات</Btn>
       </Card>
-      <p className="text-xs text-[#B8AFA0]">سيظهر اسم الشركة والشعار تلقائياً في جميع الفواتير المطبوعة.</p>
+      <p className="text-xs text-[var(--muted)]">سيظهر اسم الشركة والشعار تلقائياً في جميع الفواتير المطبوعة. تغيير الثيم يطبَّق على واجهة الموقع لجميع المستخدمين.</p>
     </div>
   );
 }
@@ -1438,7 +1521,7 @@ function EditSaleModal({ sale, products, onClose, onSave }) {
                 value={l.qty}
                 onChange={(e) => updateLineQty(l.lineId, Math.max(1, Number(e.target.value) || 1))}
               />
-              <p className="text-sm font-bold text-[#B8894A] w-20 text-left">{fmt(l.total)}</p>
+              <p className="text-sm font-bold text-[var(--accent)] w-20 text-left">{fmt(l.total)}</p>
               <button onClick={() => removeLine(l.lineId)} className="text-[#B23A3A]"><Trash2 size={16} /></button>
             </div>
           ))}
@@ -1494,9 +1577,9 @@ function PrintArea({ payload, settings, onClose }) {
       <style>{`
         @page { size: A4; margin: 14mm; }
         @media print {
-          .print-area { position: fixed; inset: 0; background: white; z-index: 9999; overflow: visible; }
+          .print-area { position: static; background: white; overflow: visible; }
           .print-toolbar { display: none !important; }
-          .print-sheet { width: auto; max-width: none; padding: 0; box-shadow: none; }
+          .print-sheet { position: static; width: auto; max-width: none; padding: 0; box-shadow: none; margin: 0; }
         }
         @media screen {
           .print-area { position: fixed; inset: 0; background: rgba(0,0,0,0.55); z-index: 9999; display: flex; flex-direction: column; align-items: center; overflow: auto; padding: 0 0 32px; }
@@ -1511,7 +1594,7 @@ function PrintArea({ payload, settings, onClose }) {
       <div className="print-toolbar no-print">
         <button
           onClick={handlePrint}
-          style={{ background: "#B8894A", color: "white", borderRadius: 10, padding: "10px 18px", fontSize: 13, fontWeight: 700, display: "flex", alignItems: "center", gap: 6 }}
+          style={{ background: "var(--accent)", color: "white", borderRadius: 10, padding: "10px 18px", fontSize: 13, fontWeight: 700, display: "flex", alignItems: "center", gap: 6 }}
         >
           طباعة / حفظ PDF
         </button>
@@ -1560,7 +1643,7 @@ function InvoiceDoc({ sale, settings }) {
   return (
     <div>
       <DocHeader settings={settings} />
-      <h2 style={{ fontSize: 18, fontWeight: 800, color: "#2B211A", marginBottom: 4 }}>فاتورة مبيعة</h2>
+      <h2 style={{ fontSize: 18, fontWeight: 800, color: "#2B211A", marginBottom: 4 }}>فاتورة</h2>
       <div style={{ display: "flex", justifyContent: "space-between", fontSize: 13, marginBottom: 16, color: "#4A3F35" }}>
         <div>
           <p style={{ margin: "2px 0" }}><b>رقم الفاتورة:</b> {sale.invoiceNo}</p>
