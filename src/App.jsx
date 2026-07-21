@@ -3,7 +3,7 @@ import {
   Plus, Trash2, Printer, Download, Upload, LogOut, Package, Receipt,
   BarChart3, Settings as SettingsIcon, Users as UsersIcon, Search, X, Check,
   Menu, Save, Image as ImageIcon, ShoppingCart, Home, AlertTriangle, Eye, EyeOff,
-  Sun, Moon, Pencil, Wallet
+  Sun, Moon, Pencil, Wallet, Tag, MessageSquare
 } from "lucide-react";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
@@ -147,11 +147,12 @@ const inputCls = "w-full rounded-xl border border-[var(--border)] bg-[var(--inpu
 
 /* ---------------------------------- Login ---------------------------------- */
 
-function LoginScreen({ users, onLogin }) {
+function LoginScreen({ users, onLogin, onRecover }) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [showPw, setShowPw] = useState(false);
   const [err, setErr] = useState("");
+  const [showRecover, setShowRecover] = useState(false);
 
   const submit = (e) => {
     e.preventDefault();
@@ -174,12 +175,12 @@ function LoginScreen({ users, onLogin }) {
           <h1 className="mt-3 text-3xl font-bold text-[var(--accent-dark)]" style={{ fontFamily: "'Amiri', serif" }}>
             عطورنا
           </h1>
-          <p className="text-[#8A7B6C] text-sm mt-1">نظام إدارة مبيعات العطور والبخور</p>
+          <p className="text-[var(--muted)] text-sm mt-1">نظام إدارة مبيعات العطور والبخور</p>
         </div>
         <Card className="p-6">
           <form onSubmit={submit} className="space-y-4">
             <Field label="اسم المستخدم">
-              <input className={inputCls} value={username} onChange={(e) => setUsername(e.target.value)} placeholder="مثال: admin" autoFocus />
+              <input className={inputCls} value={username} onChange={(e) => setUsername(e.target.value)} autoFocus />
             </Field>
             <Field label="كلمة المرور">
               <div className="relative">
@@ -190,7 +191,7 @@ function LoginScreen({ users, onLogin }) {
                   onChange={(e) => setPassword(e.target.value)}
                   placeholder="••••••••"
                 />
-                <button type="button" onClick={() => setShowPw((s) => !s)} className="absolute left-2 top-1/2 -translate-y-1/2 text-[#8A7B6C]">
+                <button type="button" onClick={() => setShowPw((s) => !s)} className="absolute left-2 top-1/2 -translate-y-1/2 text-[var(--muted)]">
                   {showPw ? <EyeOff size={16} /> : <Eye size={16} />}
                 </button>
               </div>
@@ -204,9 +205,177 @@ function LoginScreen({ users, onLogin }) {
               تسجيل الدخول
             </Btn>
           </form>
+          <button onClick={() => setShowRecover(true)} className="w-full text-center text-xs text-[var(--accent)] font-semibold mt-4">
+            نسيت اسم المستخدم أو كلمة المرور؟
+          </button>
         </Card>
-        <p className="text-center text-xs text-[#B8AFA0] mt-4">
-          الدخول الافتراضي للمدير: admin / admin123
+      </div>
+
+      {showRecover && (
+        <RecoverModal
+          users={users}
+          onRecover={onRecover}
+          onClose={() => setShowRecover(false)}
+        />
+      )}
+    </div>
+  );
+}
+
+function RecoverModal({ users, onRecover, onClose }) {
+  const [step, setStep] = useState(1); // 1: enter username, 2: answer question, 3: set new password
+  const [username, setUsername] = useState("");
+  const [answer, setAnswer] = useState("");
+  const [newPassword, setNewPassword] = useState("");
+  const [err, setErr] = useState("");
+  const [foundUser, setFoundUser] = useState(null);
+
+  const checkUsername = () => {
+    const u = users.find((x) => x.username.trim().toLowerCase() === username.trim().toLowerCase() && x.isPrimaryAdmin);
+    if (!u) {
+      setErr("هذا الحساب غير موجود، أو ليس حساب المدير الأساسي القابل للاسترجاع");
+      return;
+    }
+    if (!u.securityQuestion) {
+      setErr("لا يوجد سؤال أمان مسجَّل لهذا الحساب. تواصل مع الدعم الفني.");
+      return;
+    }
+    setFoundUser(u);
+    setErr("");
+    setStep(2);
+  };
+
+  const checkAnswer = () => {
+    if (answer.trim().toLowerCase() !== (foundUser.securityAnswer || "").trim().toLowerCase()) {
+      setErr("الإجابة غير صحيحة");
+      return;
+    }
+    setErr("");
+    setStep(3);
+  };
+
+  const resetPassword = async () => {
+    if (!newPassword.trim()) return;
+    const ok = await onRecover(foundUser.username, newPassword);
+    if (ok) {
+      setStep(4);
+    } else {
+      setErr("تعذّر تحديث كلمة المرور، حاول مرة أخرى");
+    }
+  };
+
+  return (
+    <div className="fixed inset-0 z-[9998] flex items-center justify-center bg-black/50 p-4" dir="rtl">
+      <div className="bg-[var(--surface)] rounded-2xl w-full max-w-sm p-6">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-lg font-bold">استعادة الحساب</h3>
+          <button onClick={onClose} className="p-1 text-[var(--muted)]"><X size={20} /></button>
+        </div>
+
+        {step === 1 && (
+          <div className="space-y-3">
+            <p className="text-xs text-[var(--muted)]">الاسترجاع متاح فقط لحساب المدير الأساسي للنظام. أدخل اسم المستخدم للمتابعة.</p>
+            <Field label="اسم المستخدم"><input className={inputCls} value={username} onChange={(e) => setUsername(e.target.value)} autoFocus /></Field>
+            {err && <p className="text-xs text-[#B23A3A]">{err}</p>}
+            <Btn className="w-full" onClick={checkUsername}>التالي</Btn>
+          </div>
+        )}
+
+        {step === 2 && (
+          <div className="space-y-3">
+            <Field label={foundUser.securityQuestion}>
+              <input className={inputCls} value={answer} onChange={(e) => setAnswer(e.target.value)} autoFocus />
+            </Field>
+            {err && <p className="text-xs text-[#B23A3A]">{err}</p>}
+            <Btn className="w-full" onClick={checkAnswer}>تأكيد الإجابة</Btn>
+          </div>
+        )}
+
+        {step === 3 && (
+          <div className="space-y-3">
+            <Field label="كلمة المرور الجديدة">
+              <input type="text" className={inputCls} value={newPassword} onChange={(e) => setNewPassword(e.target.value)} autoFocus />
+            </Field>
+            {err && <p className="text-xs text-[#B23A3A]">{err}</p>}
+            <Btn className="w-full" onClick={resetPassword}>حفظ كلمة المرور الجديدة</Btn>
+          </div>
+        )}
+
+        {step === 4 && (
+          <div className="space-y-3 text-center">
+            <Check size={32} className="mx-auto text-[#3F7D57]" />
+            <p className="text-sm">تم تحديث كلمة المرور بنجاح. يمكنك الآن تسجيل الدخول.</p>
+            <Btn className="w-full" onClick={onClose}>حسناً</Btn>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ---------------------------------- First-run Setup ---------------------------------- */
+
+function SetupScreen({ onComplete }) {
+  const [name, setName] = useState("");
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [securityQuestion, setSecurityQuestion] = useState("");
+  const [securityAnswer, setSecurityAnswer] = useState("");
+  const [err, setErr] = useState("");
+
+  const submit = (e) => {
+    e.preventDefault();
+    if (!name.trim() || !username.trim() || !password.trim()) {
+      setErr("يرجى تعبئة الاسم واسم المستخدم وكلمة المرور");
+      return;
+    }
+    if (!securityQuestion.trim() || !securityAnswer.trim()) {
+      setErr("يرجى إضافة سؤال أمان وإجابته لاستخدامهما لاحقاً في حال نسيان كلمة المرور");
+      return;
+    }
+    onComplete({
+      id: uid(),
+      name: name.trim(),
+      username: username.trim(),
+      password,
+      role: "admin",
+      securityQuestion: securityQuestion.trim(),
+      securityAnswer: securityAnswer.trim(),
+    });
+  };
+
+  return (
+    <div className="min-h-screen w-full bg-[var(--bg)] flex items-center justify-center px-4 py-8" dir="rtl">
+      <div className="w-full max-w-sm">
+        <div className="flex flex-col items-center mb-6">
+          <PerfumeMark size={56} />
+          <h1 className="mt-3 text-2xl font-bold text-[var(--accent-dark)]" style={{ fontFamily: "'Amiri', serif" }}>
+            مرحباً بك في عطورنا
+          </h1>
+          <p className="text-[var(--muted)] text-sm mt-1 text-center">هذه أول مرة تُشغَّل فيها — أنشئ حساب المدير الأساسي للنظام</p>
+        </div>
+        <Card className="p-6">
+          <form onSubmit={submit} className="space-y-4">
+            <Field label="اسمك"><input className={inputCls} value={name} onChange={(e) => setName(e.target.value)} autoFocus /></Field>
+            <Field label="اسم المستخدم"><input className={inputCls} value={username} onChange={(e) => setUsername(e.target.value)} /></Field>
+            <Field label="كلمة المرور"><input type="text" className={inputCls} value={password} onChange={(e) => setPassword(e.target.value)} /></Field>
+            <div className="pt-2 border-t border-[var(--border)]">
+              <p className="text-xs font-semibold text-[var(--muted)] mb-2">سؤال أمان (لاستعادة كلمة المرور لاحقاً إن نسيتها)</p>
+              <Field label="السؤال"><input className={inputCls} placeholder="مثال: ما اسم أول متجر عملت فيه؟" value={securityQuestion} onChange={(e) => setSecurityQuestion(e.target.value)} /></Field>
+              <div className="mt-3">
+                <Field label="الإجابة"><input className={inputCls} value={securityAnswer} onChange={(e) => setSecurityAnswer(e.target.value)} /></Field>
+              </div>
+            </div>
+            {err && (
+              <div className="flex items-center gap-2 text-[#B23A3A] text-xs bg-[#FBEAEA] rounded-lg px-3 py-2">
+                <AlertTriangle size={14} /> {err}
+              </div>
+            )}
+            <Btn type="submit" className="w-full">إنشاء الحساب والدخول</Btn>
+          </form>
+        </Card>
+        <p className="text-center text-xs text-[var(--muted)] mt-4">
+          هذا الحساب هو حساب المدير الأساسي ولا يمكن حذفه لاحقاً، لكن يمكن تغيير اسمه وكلمة مروره من صفحة المستخدمين.
         </p>
       </div>
     </div>
@@ -240,6 +409,7 @@ export default function App() {
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [printPayload, setPrintPayload] = useState(null); // {type:'invoice'|'record', data}
   const [editingSale, setEditingSale] = useState(null);
+  const [labelPayload, setLabelPayload] = useState(null); // {product, count}
   const [darkMode, setDarkMode] = useState(false);
   const [toast, setToast] = useState("");
 
@@ -248,11 +418,7 @@ export default function App() {
   const lastSnapshot = useRef("");
 
   const loadAll = useCallback(async (isInitial) => {
-    let u = await storeGet("perfume_users", null);
-    if (!u || u.length === 0) {
-      u = [{ id: uid(), username: "admin", password: "admin123", name: "المدير", role: "admin" }];
-      await storeSet("perfume_users", u);
-    }
+    const u = await storeGet("perfume_users", []);
     const p = await storeGet("perfume_products", []);
     const s = await storeGet("perfume_sales", []);
     const sq = await storeGet("perfume_seq", {});
@@ -323,6 +489,20 @@ export default function App() {
     await persistSales(next);
   };
 
+  // In-app only comment thread per invoice (never included in printed PDF).
+  const addSaleComment = async (id, text) => {
+    const sale = sales.find((s) => s.id === id);
+    if (!sale || !text.trim()) return;
+    const comment = {
+      id: uid(),
+      authorName: currentUser.name,
+      text: text.trim(),
+      date: todayISO(),
+    };
+    const comments = [...(sale.comments || []), comment];
+    await updateSale(id, { comments });
+  };
+
   // Full invoice edit (admin only): replaces items/collected and reconciles stock deltas.
   const editSaleWithStock = async (id, newItems, newCollected) => {
     const oldSale = sales.find((s) => s.id === id);
@@ -372,7 +552,28 @@ export default function App() {
     return (
       <>
         <GlobalStyle />
-        <LoginScreen users={users} onLogin={(u) => { setCurrentUser(u); setView("dashboard"); }} />
+        {users.length === 0 ? (
+          <SetupScreen
+            onComplete={async (adminUser) => {
+              const withFlag = { ...adminUser, isPrimaryAdmin: true };
+              await persistUsers([withFlag]);
+              setCurrentUser(withFlag);
+              setView("dashboard");
+            }}
+          />
+        ) : (
+          <LoginScreen
+            users={users}
+            onLogin={(u) => { setCurrentUser(u); setView("dashboard"); }}
+            onRecover={async (username, newPassword) => {
+              const idx = users.findIndex((u) => u.username.toLowerCase() === username.toLowerCase() && u.isPrimaryAdmin);
+              if (idx === -1) return false;
+              const next = users.map((u, i) => (i === idx ? { ...u, password: newPassword } : u));
+              await persistUsers(next);
+              return true;
+            }}
+          />
+        )}
       </>
     );
   }
@@ -396,6 +597,15 @@ export default function App() {
             setEditingSale(null);
             showToast("تم تعديل الفاتورة بنجاح");
           }}
+        />
+      )}
+
+      {labelPayload && (
+        <LabelsPrintArea
+          product={labelPayload.product}
+          count={labelPayload.count}
+          settings={settings}
+          onClose={() => setLabelPayload(null)}
         />
       )}
 
@@ -510,14 +720,16 @@ export default function App() {
                 showToast("تم تسجيل التحصيل");
               }}
               onEditSale={(sale) => setEditingSale(sale)}
+              onAddComment={addSaleComment}
             />
           )}
-          {view === "stats" && <Stats sales={sales} users={users} currentUser={currentUser} isAdmin={isAdmin} />}
+          {view === "stats" && <Stats sales={sales} users={users} products={products} currentUser={currentUser} isAdmin={isAdmin} />}
           {view === "inventory" && (
             <Inventory
               products={products}
               isAdmin={isAdmin}
               onSave={async (next) => { await persistProducts(next); showToast("تم حفظ المخزون"); }}
+              onPrintLabels={(product, count) => setLabelPayload({ product, count })}
             />
           )}
           {view === "users" && isAdmin && (
@@ -878,11 +1090,13 @@ function NewSale({ products, users, currentUser, sales, seq, onCreate }) {
 
 /* ---------------------------------- Sales Records ---------------------------------- */
 
-function SalesRecords({ sales, users, currentUser, isAdmin, onDelete, onPrintInvoice, onPrintRecord, onCollectPayment, onEditSale }) {
+function SalesRecords({ sales, users, currentUser, isAdmin, onDelete, onPrintInvoice, onPrintRecord, onCollectPayment, onEditSale, onAddComment }) {
   const [sellerFilter, setSellerFilter] = useState("all");
   const [search, setSearch] = useState("");
   const [payingId, setPayingId] = useState(null);
   const [payAmount, setPayAmount] = useState("");
+  const [commentingId, setCommentingId] = useState(null);
+  const [commentText, setCommentText] = useState("");
 
   const sellers = useMemo(() => {
     const map = new Map();
@@ -907,6 +1121,12 @@ function SalesRecords({ sales, users, currentUser, isAdmin, onDelete, onPrintInv
     setPayAmount("");
   };
 
+  const submitComment = (sale) => {
+    if (!commentText.trim()) return;
+    onAddComment(sale.id, commentText);
+    setCommentText("");
+  };
+
   const PayRow = ({ sale }) => (
     <div className="mt-2 flex gap-2 items-center bg-[var(--surface-2)] rounded-xl p-2">
       <input
@@ -925,6 +1145,38 @@ function SalesRecords({ sales, users, currentUser, isAdmin, onDelete, onPrintInv
       <button onClick={() => { setPayingId(null); setPayAmount(""); }} className="p-2 text-[var(--muted)]">
         <X size={16} />
       </button>
+    </div>
+  );
+
+  const CommentThread = ({ sale }) => (
+    <div className="mt-2 bg-[var(--surface-2)] rounded-xl p-3 space-y-2">
+      {(sale.comments || []).length === 0 ? (
+        <p className="text-xs text-[var(--muted)]">لا توجد ملاحظات بعد — أول ملاحظة تُسجَّل باسمك</p>
+      ) : (
+        <div className="space-y-2 max-h-48 overflow-y-auto">
+          {sale.comments.map((c) => (
+            <div key={c.id} className="text-xs bg-[var(--surface)] rounded-lg p-2 border border-[var(--border)]">
+              <div className="flex justify-between mb-0.5">
+                <span className="font-semibold text-[var(--accent-dark)]">{c.authorName}</span>
+                <span className="text-[var(--muted)]">{dateLabel(c.date)} {timeLabel(c.date)}</span>
+              </div>
+              <p className="text-[var(--text)]">{c.text}</p>
+            </div>
+          ))}
+        </div>
+      )}
+      <div className="flex gap-2">
+        <input
+          className={inputCls + " flex-1 !py-2 text-xs"}
+          placeholder="اكتب ملاحظة أو تعليق..."
+          value={commentingId === sale.id ? commentText : ""}
+          onChange={(e) => { setCommentingId(sale.id); setCommentText(e.target.value); }}
+          onKeyDown={(e) => { if (e.key === "Enter") submitComment(sale); }}
+        />
+        <Btn className="!py-2 !px-3 text-xs" onClick={() => submitComment(sale)}>
+          <MessageSquare size={14} />
+        </Btn>
+      </div>
     </div>
   );
 
@@ -984,6 +1236,15 @@ function SalesRecords({ sales, users, currentUser, isAdmin, onDelete, onPrintInv
                       <Wallet size={14} /> تسجيل تحصيل
                     </Btn>
                   )}
+                  <button
+                    onClick={() => setCommentingId(commentingId === s.id ? null : s.id)}
+                    className="p-2.5 rounded-xl bg-[var(--surface-3)] text-[var(--accent-dark)] relative"
+                  >
+                    <MessageSquare size={16} />
+                    {(s.comments || []).length > 0 && (
+                      <span className="absolute -top-1 -left-1 bg-[#B23A3A] text-white text-[9px] rounded-full w-4 h-4 flex items-center justify-center">{s.comments.length}</span>
+                    )}
+                  </button>
                   {isAdmin && (
                     <>
                       <button onClick={() => onEditSale(s)} className="p-2.5 rounded-xl bg-[var(--surface-3)] text-[var(--accent-dark)]"><Pencil size={16} /></button>
@@ -992,6 +1253,7 @@ function SalesRecords({ sales, users, currentUser, isAdmin, onDelete, onPrintInv
                   )}
                 </div>
                 {payingId === s.id && <PayRow sale={s} />}
+                {commentingId === s.id && <CommentThread sale={s} />}
               </Card>
             ))}
           </div>
@@ -1028,6 +1290,12 @@ function SalesRecords({ sales, users, currentUser, isAdmin, onDelete, onPrintInv
                           {s.remaining > 0 && (
                             <button onClick={() => { setPayingId(payingId === s.id ? null : s.id); setPayAmount(""); }} className="p-1.5 rounded-lg text-[#3F7D57] hover:bg-[var(--surface-3)]" title="تسجيل تحصيل"><Wallet size={16} /></button>
                           )}
+                          <button onClick={() => setCommentingId(commentingId === s.id ? null : s.id)} className="p-1.5 rounded-lg text-[var(--accent-dark)] hover:bg-[var(--surface-3)] relative" title="ملاحظات">
+                            <MessageSquare size={16} />
+                            {(s.comments || []).length > 0 && (
+                              <span className="absolute -top-1 -left-1 bg-[#B23A3A] text-white text-[9px] rounded-full w-4 h-4 flex items-center justify-center">{s.comments.length}</span>
+                            )}
+                          </button>
                           {isAdmin && (
                             <>
                               <button onClick={() => onEditSale(s)} className="p-1.5 rounded-lg text-[var(--accent-dark)] hover:bg-[var(--surface-3)]" title="تعديل"><Pencil size={16} /></button>
@@ -1044,6 +1312,13 @@ function SalesRecords({ sales, users, currentUser, isAdmin, onDelete, onPrintInv
                         </td>
                       </tr>
                     )}
+                    {commentingId === s.id && (
+                      <tr>
+                        <td colSpan={8} className="px-4 pb-3">
+                          <CommentThread sale={s} />
+                        </td>
+                      </tr>
+                    )}
                   </React.Fragment>
                 ))}
               </tbody>
@@ -1057,7 +1332,7 @@ function SalesRecords({ sales, users, currentUser, isAdmin, onDelete, onPrintInv
 
 /* ---------------------------------- Stats ---------------------------------- */
 
-function Stats({ sales, users, currentUser, isAdmin }) {
+function Stats({ sales, users, products, currentUser, isAdmin }) {
   const [sellerFilter, setSellerFilter] = useState("all");
   const sellers = users.filter((u) => u.role === "seller" || u.role === "admin");
 
@@ -1067,6 +1342,20 @@ function Stats({ sales, users, currentUser, isAdmin }) {
   const totalRevenue = list.reduce((a, s) => a + s.total, 0);
   const totalCollected = list.reduce((a, s) => a + s.collected, 0);
   const totalRemaining = list.reduce((a, s) => a + s.remaining, 0);
+
+  const costById = useMemo(() => {
+    const m = new Map();
+    products.forEach((p) => m.set(p.id, p.cost || 0));
+    return m;
+  }, [products]);
+
+  const totalProfit = useMemo(() => {
+    if (!isAdmin) return 0;
+    return list.reduce((sum, s) => {
+      const saleCost = s.items.reduce((a, i) => a + (costById.get(i.productId) || 0) * i.qty, 0);
+      return sum + (s.total - saleCost);
+    }, 0);
+  }, [list, costById, isAdmin]);
 
   const bySeller = useMemo(() => {
     const map = new Map();
@@ -1105,6 +1394,14 @@ function Stats({ sales, users, currentUser, isAdmin }) {
         <StatCard label="المحصل" value={fmt(totalCollected) + " د.ك"} color="#3F7D57" />
         <StatCard label="المتبقي" value={fmt(totalRemaining) + " د.ك"} color="#B23A3A" />
       </div>
+
+      {isAdmin && (
+        <Card className="p-4">
+          <p className="text-xs text-[var(--muted)] mb-1">صافي الربح (بعد خصم سعر التكلفة)</p>
+          <p className={`text-2xl font-extrabold ${totalProfit >= 0 ? "text-[#3F7D57]" : "text-[#B23A3A]"}`}>{fmt(totalProfit)} د.ك</p>
+          <p className="text-xs text-[var(--muted)] mt-1">مرئي للمدير فقط — بناءً على سعر التكلفة المسجَّل لكل منتج</p>
+        </Card>
+      )}
 
       {sellerFilter === "all" && bySeller.length > 0 && (
         <Card className="p-4">
@@ -1145,23 +1442,24 @@ function Stats({ sales, users, currentUser, isAdmin }) {
 
 /* ---------------------------------- Inventory ---------------------------------- */
 
-function Inventory({ products, isAdmin, onSave }) {
-  const [form, setForm] = useState({ name: "", price: "", stock: "", minStock: "5" });
+function Inventory({ products, isAdmin, onSave, onPrintLabels }) {
+  const [form, setForm] = useState({ name: "", price: "", cost: "", stock: "", minStock: "5" });
   const [editingId, setEditingId] = useState(null);
+  const [labelQty, setLabelQty] = useState({});
 
-  const resetForm = () => { setForm({ name: "", price: "", stock: "", minStock: "5" }); setEditingId(null); };
+  const resetForm = () => { setForm({ name: "", price: "", cost: "", stock: "", minStock: "5" }); setEditingId(null); };
 
   const submit = () => {
     if (!form.name || form.price === "" || form.stock === "") return;
     if (editingId) {
-      onSave(products.map((p) => p.id === editingId ? { ...p, name: form.name, price: Number(form.price), stock: Number(form.stock), minStock: Number(form.minStock || 5) } : p));
+      onSave(products.map((p) => p.id === editingId ? { ...p, name: form.name, price: Number(form.price), cost: Number(form.cost || 0), stock: Number(form.stock), minStock: Number(form.minStock || 5) } : p));
     } else {
-      onSave([...products, { id: uid(), name: form.name, price: Number(form.price), stock: Number(form.stock), minStock: Number(form.minStock || 5) }]);
+      onSave([...products, { id: uid(), name: form.name, price: Number(form.price), cost: Number(form.cost || 0), stock: Number(form.stock), minStock: Number(form.minStock || 5) }]);
     }
     resetForm();
   };
 
-  const startEdit = (p) => { setForm({ name: p.name, price: String(p.price), stock: String(p.stock), minStock: String(p.minStock ?? 5) }); setEditingId(p.id); };
+  const startEdit = (p) => { setForm({ name: p.name, price: String(p.price), cost: String(p.cost || 0), stock: String(p.stock), minStock: String(p.minStock ?? 5) }); setEditingId(p.id); };
 
   return (
     <div className="space-y-5">
@@ -1174,7 +1472,8 @@ function Inventory({ products, isAdmin, onSave }) {
             <div className="col-span-2 md:col-span-1">
               <Field label="اسم المنتج"><input className={inputCls} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="عود كمبودي" /></Field>
             </div>
-            <Field label="السعر (د.ك)"><input type="number" step="0.001" className={inputCls} value={form.price} onChange={(e) => setForm({ ...form, price: e.target.value })} /></Field>
+            <Field label="سعر البيع (د.ك)"><input type="number" step="0.001" className={inputCls} value={form.price} onChange={(e) => setForm({ ...form, price: e.target.value })} /></Field>
+            <Field label="سعر التكلفة (د.ك)"><input type="number" step="0.001" className={inputCls} value={form.cost} onChange={(e) => setForm({ ...form, cost: e.target.value })} /></Field>
             <Field label="الكمية بالمخزون"><input type="number" className={inputCls} value={form.stock} onChange={(e) => setForm({ ...form, stock: e.target.value })} /></Field>
             <Field label="حد التنبيه"><input type="number" className={inputCls} value={form.minStock} onChange={(e) => setForm({ ...form, minStock: e.target.value })} /></Field>
           </div>
@@ -1194,15 +1493,30 @@ function Inventory({ products, isAdmin, onSave }) {
               <div className="flex justify-between items-start">
                 <div>
                   <p className="font-bold">{p.name}</p>
-                  <p className="text-xs text-[#8A7B6C]">{fmt(p.price)} د.ك / وحدة</p>
+                  <p className="text-xs text-[var(--muted)]">{fmt(p.price)} د.ك / وحدة</p>
+                  {isAdmin && <p className="text-xs text-[var(--muted)]">التكلفة: {fmt(p.cost || 0)} د.ك</p>}
                 </div>
                 {p.stock <= (p.minStock ?? 5) && <AlertTriangle size={16} className="text-[#B23A3A]" />}
               </div>
               <p className={`mt-2 text-sm font-bold ${p.stock <= (p.minStock ?? 5) ? "text-[#B23A3A]" : "text-[#3F7D57]"}`}>
                 الكمية المتبقية: {p.stock}
               </p>
+
+              <div className="flex items-center gap-2 mt-3">
+                <input
+                  type="number"
+                  min="1"
+                  className="w-16 rounded-lg border border-[var(--border)] bg-[var(--input-bg)] px-2 py-1.5 text-xs text-center"
+                  value={labelQty[p.id] ?? 12}
+                  onChange={(e) => setLabelQty({ ...labelQty, [p.id]: Math.max(1, Number(e.target.value) || 1) })}
+                />
+                <Btn variant="ghost" className="flex-1 py-1.5 text-xs" onClick={() => onPrintLabels(p, labelQty[p.id] ?? 12)}>
+                  <Tag size={14} /> طباعة ملصقات وباركود
+                </Btn>
+              </div>
+
               {isAdmin && (
-                <div className="flex gap-2 mt-3">
+                <div className="flex gap-2 mt-2">
                   <button onClick={() => startEdit(p)} className="text-xs font-semibold text-[var(--accent-dark)] bg-[var(--surface-3)] rounded-lg px-3 py-1.5">تعديل</button>
                   <button onClick={() => onSave(products.filter((x) => x.id !== p.id))} className="text-xs font-semibold text-[#B23A3A] bg-[#FBEAEA] rounded-lg px-3 py-1.5">حذف</button>
                 </div>
@@ -1220,7 +1534,7 @@ function Inventory({ products, isAdmin, onSave }) {
 function UsersAdmin({ users, onSave }) {
   const [form, setForm] = useState({ username: "", password: "", name: "", role: "seller" });
   const [editingId, setEditingId] = useState(null);
-  const [editForm, setEditForm] = useState({ username: "", password: "", name: "", role: "seller" });
+  const [editForm, setEditForm] = useState({ username: "", password: "", name: "", role: "seller", securityQuestion: "", securityAnswer: "" });
 
   const submit = () => {
     if (!form.username || !form.password || !form.name) return;
@@ -1231,7 +1545,14 @@ function UsersAdmin({ users, onSave }) {
 
   const startEdit = (u) => {
     setEditingId(u.id);
-    setEditForm({ username: u.username, password: u.password, name: u.name, role: u.role });
+    setEditForm({
+      username: u.username,
+      password: u.password,
+      name: u.name,
+      role: u.role,
+      securityQuestion: u.securityQuestion || "",
+      securityAnswer: u.securityAnswer || "",
+    });
   };
 
   const saveEdit = (id) => {
@@ -1269,7 +1590,7 @@ function UsersAdmin({ users, onSave }) {
                 <div className="grid grid-cols-2 gap-3">
                   <Field label="الاسم"><input className={inputCls} value={editForm.name} onChange={(e) => setEditForm({ ...editForm, name: e.target.value })} /></Field>
                   <Field label="الدور">
-                    <select className={inputCls} value={editForm.role} onChange={(e) => setEditForm({ ...editForm, role: e.target.value })}>
+                    <select className={inputCls} value={editForm.role} onChange={(e) => setEditForm({ ...editForm, role: e.target.value })} disabled={u.isPrimaryAdmin}>
                       <option value="seller">بائع</option>
                       <option value="admin">مدير</option>
                     </select>
@@ -1277,6 +1598,13 @@ function UsersAdmin({ users, onSave }) {
                   <Field label="اسم المستخدم"><input className={inputCls} value={editForm.username} onChange={(e) => setEditForm({ ...editForm, username: e.target.value })} /></Field>
                   <Field label="كلمة المرور"><input className={inputCls} value={editForm.password} onChange={(e) => setEditForm({ ...editForm, password: e.target.value })} /></Field>
                 </div>
+                {u.isPrimaryAdmin && (
+                  <div className="pt-2 border-t border-[var(--border)] space-y-3">
+                    <p className="text-xs font-semibold text-[var(--muted)]">سؤال استعادة الحساب (لهذا الحساب فقط)</p>
+                    <Field label="السؤال"><input className={inputCls} value={editForm.securityQuestion} onChange={(e) => setEditForm({ ...editForm, securityQuestion: e.target.value })} /></Field>
+                    <Field label="الإجابة"><input className={inputCls} value={editForm.securityAnswer} onChange={(e) => setEditForm({ ...editForm, securityAnswer: e.target.value })} /></Field>
+                  </div>
+                )}
                 <div className="flex gap-2">
                   <Btn onClick={() => saveEdit(u.id)}><Save size={16} /> حفظ</Btn>
                   <Btn variant="outline" onClick={() => setEditingId(null)}>إلغاء</Btn>
@@ -1285,12 +1613,15 @@ function UsersAdmin({ users, onSave }) {
             ) : (
               <div className="flex items-center justify-between">
                 <div>
-                  <p className="font-bold">{u.name} <span className="text-xs font-normal text-[var(--muted)]">({u.username})</span></p>
+                  <p className="font-bold">
+                    {u.name} <span className="text-xs font-normal text-[var(--muted)]">({u.username})</span>
+                    {u.isPrimaryAdmin && <span className="text-[10px] font-semibold text-[var(--accent)] mr-2">(الحساب الأساسي)</span>}
+                  </p>
                   <p className="text-xs text-[var(--muted)]">{u.role === "admin" ? "مدير" : "بائع"}</p>
                 </div>
                 <div className="flex items-center gap-2">
                   <button onClick={() => startEdit(u)} className="p-2 rounded-lg text-[var(--accent-dark)] hover:bg-[var(--surface-3)]"><Pencil size={16} /></button>
-                  {users.length > 1 && (
+                  {!u.isPrimaryAdmin && (
                     <button onClick={() => onSave(users.filter((x) => x.id !== u.id))} className="p-2 rounded-lg text-[#B23A3A] hover:bg-[#FBEAEA]"><Trash2 size={16} /></button>
                   )}
                 </div>
@@ -1557,6 +1888,103 @@ function EditSaleModal({ sale, products, onClose, onSave }) {
             <Save size={16} /> حفظ التعديلات
           </Btn>
           <Btn variant="outline" onClick={onClose}>إلغاء</Btn>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ---------------------------------- Barcode (Code 39) ---------------------------------- */
+// Verified real-world Code 39 width table (1=narrow, 2=wide; Bar,Space,Bar,Space,Bar,Space,Bar,Space,Bar).
+const CODE39_PATTERNS = {
+  "0": "111221211", "1": "211211112", "2": "112211112", "3": "212211111",
+  "4": "111221112", "5": "211221111", "6": "112221111", "7": "111211212",
+  "8": "211211211", "9": "112211211", "A": "211112112", "B": "112112112",
+  "C": "212112111", "D": "111122112", "E": "211122111", "F": "112122111",
+  "G": "111112212", "H": "211112211", "I": "112112211", "J": "111122211",
+  "K": "211111122", "L": "112111122", "M": "212111121", "N": "111121122",
+  "O": "211121121", "P": "112121121", "Q": "111111222", "R": "211111221",
+  "S": "112111221", "T": "111121221", "U": "221111112", "V": "122111112",
+  "W": "222111111", "X": "121121112", "Y": "221121111", "Z": "122121111",
+  "-": "121111212", ".": "221111211", " ": "122111211", "$": "121212111",
+  "/": "121211121", "+": "121112121", "%": "111212121", "*": "121121211",
+};
+
+function code39Elements(rawValue) {
+  const clean = String(rawValue).toUpperCase().replace(/[^0-9A-Z\-. $/+%]/g, "");
+  const full = `*${clean}*`;
+  const elements = [];
+  for (const ch of full) {
+    const pattern = CODE39_PATTERNS[ch] || CODE39_PATTERNS["-"];
+    for (let i = 0; i < pattern.length; i++) {
+      elements.push({ isBar: i % 2 === 0, width: Number(pattern[i]) });
+    }
+    elements.push({ isBar: false, width: 1 }); // inter-character gap
+  }
+  return elements;
+}
+
+function Code39Barcode({ value, height = 46, unit = 2.2 }) {
+  const elements = code39Elements(value);
+  const totalWidth = elements.reduce((a, e) => a + e.width, 0) * unit;
+  let x = 0;
+  const bars = [];
+  elements.forEach((e, i) => {
+    if (e.isBar) {
+      bars.push(<rect key={i} x={x} y={0} width={e.width * unit} height={height} fill="#111" />);
+    }
+    x += e.width * unit;
+  });
+  return (
+    <svg width={totalWidth} height={height} viewBox={`0 0 ${totalWidth} ${height}`} style={{ display: "block" }}>
+      {bars}
+    </svg>
+  );
+}
+
+/* ---------------------------------- Product Labels (barcode + price) ---------------------------------- */
+
+function LabelsPrintArea({ product, count, settings, onClose }) {
+  const handlePrint = () => window.print();
+  const labels = Array.from({ length: count });
+
+  return (
+    <div className="print-area">
+      <style>{`
+        @page { size: A4; margin: 8mm; }
+        @media print {
+          .print-area { position: static; background: white; overflow: visible; }
+          .print-toolbar { display: none !important; }
+        }
+        @media screen {
+          .print-area { position: fixed; inset: 0; background: rgba(0,0,0,0.55); z-index: 9999; display: flex; flex-direction: column; align-items: center; overflow: auto; padding: 0 0 32px; }
+          .print-toolbar { position: sticky; top: 0; z-index: 2; width: 100%; display: flex; justify-content: center; gap: 8px; padding: 12px; background: rgba(0,0,0,0.55); backdrop-filter: blur(2px); }
+          .label-sheet { background: white; width: calc(100% - 24px); max-width: 210mm; padding: 8mm; box-shadow: 0 10px 40px rgba(0,0,0,0.3); margin-top: 4px; }
+        }
+        .label-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 3mm; }
+        .label-card { border: 1px dashed #999; border-radius: 4px; padding: 3mm 2mm; text-align: center; display: flex; flex-direction: column; align-items: center; gap: 1.5mm; page-break-inside: avoid; }
+      `}</style>
+
+      <div className="print-toolbar no-print">
+        <button onClick={handlePrint} style={{ background: "var(--accent)", color: "white", borderRadius: 10, padding: "10px 18px", fontSize: 13, fontWeight: 700 }}>
+          طباعة / حفظ PDF
+        </button>
+        <button onClick={onClose} style={{ background: "#2B211A", color: "white", borderRadius: 10, padding: "10px 18px", fontSize: 13, fontWeight: 700 }}>
+          إغلاق
+        </button>
+      </div>
+
+      <div className="label-sheet" dir="rtl" style={{ fontFamily: "'Tajawal', sans-serif", color: "#111" }}>
+        <div className="label-grid">
+          {labels.map((_, i) => (
+            <div className="label-card" key={i}>
+              <p style={{ fontSize: 11, fontWeight: 700, margin: 0 }}>{settings.companyName || "عطورنا"}</p>
+              <p style={{ fontSize: 12, fontWeight: 700, margin: 0 }}>{product.name}</p>
+              <Code39Barcode value={product.id} height={34} unit={1.4} />
+              <p style={{ fontSize: 9, letterSpacing: 1, margin: 0, color: "#555" }}>{product.id.toUpperCase()}</p>
+              <p style={{ fontSize: 14, fontWeight: 800, margin: 0 }}>{fmt(product.price)} د.ك</p>
+            </div>
+          ))}
         </div>
       </div>
     </div>
