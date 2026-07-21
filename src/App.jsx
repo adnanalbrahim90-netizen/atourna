@@ -2,7 +2,8 @@ import React, { useState, useEffect, useMemo, useRef, useCallback } from "react"
 import {
   Plus, Trash2, Printer, Download, Upload, LogOut, Package, Receipt,
   BarChart3, Settings as SettingsIcon, Users as UsersIcon, Search, X, Check,
-  Menu, Save, Image as ImageIcon, ShoppingCart, Home, AlertTriangle, Eye, EyeOff
+  Menu, Save, Image as ImageIcon, ShoppingCart, Home, AlertTriangle, Eye, EyeOff,
+  Sun, Moon, Pencil, Wallet
 } from "lucide-react";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
@@ -15,14 +16,16 @@ const uid = () => Math.random().toString(36).slice(2, 10) + Date.now().toString(
 
 const fmt = (n) => {
   const v = Number(n || 0);
-  return v.toLocaleString("ar-KW", { minimumFractionDigits: 3, maximumFractionDigits: 3 });
+  // "en-GB" numeral formatting forces Latin digits (0-9) even inside an RTL/Arabic UI,
+  // instead of the Arabic-Indic digits (٠١٢٣) that "ar-KW" would otherwise produce.
+  return v.toLocaleString("en-GB", { minimumFractionDigits: 3, maximumFractionDigits: 3 });
 };
 
 const todayISO = () => new Date().toISOString();
 
 const dateLabel = (iso) => {
   try {
-    return new Date(iso).toLocaleDateString("ar-KW", { year: "numeric", month: "2-digit", day: "2-digit" });
+    return new Date(iso).toLocaleDateString("en-GB", { year: "numeric", month: "2-digit", day: "2-digit" });
   } catch {
     return iso;
   }
@@ -30,7 +33,7 @@ const dateLabel = (iso) => {
 
 const timeLabel = (iso) => {
   try {
-    return new Date(iso).toLocaleTimeString("ar-KW", { hour: "2-digit", minute: "2-digit" });
+    return new Date(iso).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
   } catch {
     return "";
   }
@@ -55,6 +58,31 @@ async function storeSet(key, value, shared = true) {
 }
 
 const COLORS = ["#B8894A", "#5B2333", "#3F7D57", "#8A7B6C", "#C9A227", "#7A4B63"];
+
+function exportSalesCsv(label, list) {
+  const header = ["رقم الفاتورة", "البائع", "التاريخ", "المنتجات", "الإجمالي", "المحصل", "المتبقي"];
+  const rows = list.map((s) => [
+    s.invoiceNo,
+    s.sellerName,
+    dateLabel(s.date),
+    s.items.map((i) => `${i.name} (${i.qty})`).join(" / "),
+    s.total.toFixed(3),
+    s.collected.toFixed(3),
+    s.remaining.toFixed(3),
+  ]);
+  const csv = [header, ...rows]
+    .map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(","))
+    .join("\r\n");
+  const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `سجل-مبيعات-${label}-${new Date().toISOString().slice(0, 10)}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
 
 /* ---------------------------------- brand mark ---------------------------------- */
 
@@ -87,8 +115,8 @@ function Btn({ children, variant = "primary", className = "", ...props }) {
   const variants = {
     primary: "bg-[#B8894A] text-white hover:bg-[#a67a3e] shadow-sm shadow-[#B8894A]/30",
     dark: "bg-[#5B2333] text-white hover:bg-[#4a1c29] shadow-sm",
-    ghost: "bg-[#F7F1E6] text-[#5B2333] hover:bg-[#F0E6D0]",
-    outline: "border border-[#E3D6BE] text-[#2B211A] hover:bg-[#FBF8F2]",
+    ghost: "bg-[var(--surface-3)] text-[#5B2333] hover:bg-[var(--border)]",
+    outline: "border border-[var(--border)] text-[var(--text)] hover:bg-[var(--surface-2)]",
     danger: "bg-[#B23A3A] text-white hover:bg-[#9c3131]",
   };
   return (
@@ -100,7 +128,7 @@ function Btn({ children, variant = "primary", className = "", ...props }) {
 
 function Card({ children, className = "" }) {
   return (
-    <div className={`bg-white rounded-2xl border border-[#F0E6D0] shadow-[0_2px_12px_rgba(91,35,51,0.06)] ${className}`}>
+    <div className={`bg-[var(--surface)] rounded-2xl border border-[var(--border)] shadow-[0_2px_12px_rgba(91,35,51,0.06)] ${className}`}>
       {children}
     </div>
   );
@@ -109,13 +137,13 @@ function Card({ children, className = "" }) {
 function Field({ label, children }) {
   return (
     <label className="block">
-      <span className="block text-xs font-semibold text-[#8A7B6C] mb-1">{label}</span>
+      <span className="block text-xs font-semibold text-[var(--muted)] mb-1">{label}</span>
       {children}
     </label>
   );
 }
 
-const inputCls = "w-full rounded-xl border border-[#E3D6BE] bg-[#FBF9F5] px-3 py-2.5 text-sm text-[#2B211A] outline-none focus:ring-2 focus:ring-[#B8894A]/40 focus:border-[#B8894A]";
+const inputCls = "w-full rounded-xl border border-[var(--border)] bg-[var(--input-bg)] px-3 py-2.5 text-sm text-[var(--text)] outline-none focus:ring-2 focus:ring-[#B8894A]/40 focus:border-[#B8894A]";
 
 /* ---------------------------------- Login ---------------------------------- */
 
@@ -139,7 +167,7 @@ function LoginScreen({ users, onLogin }) {
   };
 
   return (
-    <div className="min-h-screen w-full bg-white flex items-center justify-center px-4" dir="rtl">
+    <div className="min-h-screen w-full bg-[var(--bg)] flex items-center justify-center px-4" dir="rtl">
       <div className="w-full max-w-sm">
         <div className="flex flex-col items-center mb-8">
           <PerfumeMark size={64} />
@@ -189,7 +217,7 @@ function LoginScreen({ users, onLogin }) {
 
 const NAV_ITEMS = [
   { key: "dashboard", label: "الرئيسية", icon: Home, roles: ["admin", "seller"] },
-  { key: "newsale", label: "تسجيل مبيعة", icon: ShoppingCart, roles: ["admin", "seller"] },
+  { key: "newsale", label: "تسجيل عملية بيع", icon: ShoppingCart, roles: ["admin", "seller"] },
   { key: "records", label: "سجل المبيعات", icon: Receipt, roles: ["admin", "seller"] },
   { key: "stats", label: "الإحصائيات", icon: BarChart3, roles: ["admin", "seller"] },
   { key: "inventory", label: "المخزون", icon: Package, roles: ["admin", "seller"] },
@@ -211,6 +239,8 @@ export default function App() {
   const [view, setView] = useState("dashboard");
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [printPayload, setPrintPayload] = useState(null); // {type:'invoice'|'record', data}
+  const [editingSale, setEditingSale] = useState(null);
+  const [darkMode, setDarkMode] = useState(false);
   const [toast, setToast] = useState("");
 
   // Keeps the last-synced snapshot so the periodic refresh below can skip
@@ -253,6 +283,26 @@ export default function App() {
     return () => clearInterval(interval);
   }, [loadAll]);
 
+  // Dark mode is a per-device preference, not shared business data.
+  useEffect(() => {
+    (async () => {
+      const saved = await storeGet("perfume_darkmode", false, false);
+      setDarkMode(!!saved);
+    })();
+  }, []);
+
+  useEffect(() => {
+    document.documentElement.classList.toggle("dark", darkMode);
+  }, [darkMode]);
+
+  const toggleDarkMode = () => {
+    setDarkMode((d) => {
+      const next = !d;
+      storeSet("perfume_darkmode", next, false);
+      return next;
+    });
+  };
+
   const showToast = useCallback((msg) => {
     setToast(msg);
     setTimeout(() => setToast(""), 2500);
@@ -264,6 +314,37 @@ export default function App() {
   const persistSeq = async (next) => { setSeq(next); await storeSet("perfume_seq", next); };
   const persistSettings = async (next) => { setSettings(next); await storeSet("perfume_settings", next); };
 
+  const updateSale = async (id, updates) => {
+    const next = sales.map((s) => (s.id === id ? { ...s, ...updates } : s));
+    await persistSales(next);
+  };
+
+  // Full invoice edit (admin only): replaces items/collected and reconciles stock deltas.
+  const editSaleWithStock = async (id, newItems, newCollected) => {
+    const oldSale = sales.find((s) => s.id === id);
+    if (!oldSale) return;
+    const total = newItems.reduce((a, l) => a + l.total, 0);
+    const collected = Math.min(newCollected, total);
+    const remaining = Math.max(0, total - collected);
+
+    const qtyByProduct = (items) => {
+      const m = new Map();
+      items.forEach((i) => m.set(i.productId, (m.get(i.productId) || 0) + i.qty));
+      return m;
+    };
+    const oldQty = qtyByProduct(oldSale.items);
+    const newQty = qtyByProduct(newItems);
+    const allProductIds = new Set([...oldQty.keys(), ...newQty.keys()]);
+    const updatedProducts = products.map((p) => {
+      if (!allProductIds.has(p.id)) return p;
+      const delta = (newQty.get(p.id) || 0) - (oldQty.get(p.id) || 0);
+      return delta ? { ...p, stock: p.stock - delta } : p;
+    });
+
+    await persistProducts(updatedProducts);
+    await updateSale(id, { items: newItems, total, collected, remaining });
+  };
+
   const isAdmin = currentUser?.role === "admin";
 
   const visibleNav = NAV_ITEMS.filter((n) => n.roles.includes(currentUser?.role));
@@ -274,7 +355,7 @@ export default function App() {
 
   if (loading) {
     return (
-      <div className="min-h-screen bg-white flex items-center justify-center" dir="rtl">
+      <div className="min-h-screen bg-[var(--bg)] flex items-center justify-center" dir="rtl">
         <div className="flex flex-col items-center gap-3">
           <PerfumeMark size={48} />
           <p className="text-[#8A7B6C] text-sm">جارِ التحميل...</p>
@@ -293,7 +374,7 @@ export default function App() {
   }
 
   return (
-    <div className="min-h-screen bg-white text-[#2B211A]" dir="rtl">
+    <div className="min-h-screen bg-[var(--bg)] text-[var(--text)]" dir="rtl">
       <GlobalStyle />
 
       {/* Print area */}
@@ -301,8 +382,21 @@ export default function App() {
         <PrintArea payload={printPayload} settings={settings} onClose={() => setPrintPayload(null)} />
       )}
 
+      {editingSale && (
+        <EditSaleModal
+          sale={editingSale}
+          products={products}
+          onClose={() => setEditingSale(null)}
+          onSave={async (newItems, newCollected) => {
+            await editSaleWithStock(editingSale.id, newItems, newCollected);
+            setEditingSale(null);
+            showToast("تم تعديل الفاتورة بنجاح");
+          }}
+        />
+      )}
+
       {/* Top bar */}
-      <header className="no-print sticky top-0 z-30 bg-white/95 backdrop-blur border-b border-[#F0E6D0]">
+      <header className="no-print sticky top-0 z-30 bg-[var(--bg)]/95 backdrop-blur border-b border-[var(--border)]">
         <div className="max-w-6xl mx-auto flex items-center justify-between px-4 py-3">
           <div className="flex items-center gap-2">
             <button className="md:hidden p-2 -mr-2 text-[#5B2333]" onClick={() => setMobileNavOpen(true)}>
@@ -315,9 +409,16 @@ export default function App() {
           </div>
           <div className="flex items-center gap-3">
             <div className="text-left hidden sm:block">
-              <p className="text-xs text-[#8A7B6C] leading-tight">{isAdmin ? "مدير النظام" : "بائع"}</p>
+              <p className="text-xs text-[var(--muted)] leading-tight">{isAdmin ? "مدير النظام" : "بائع"}</p>
               <p className="text-sm font-semibold leading-tight">{currentUser.name}</p>
             </div>
+            <button
+              onClick={toggleDarkMode}
+              className="p-2 rounded-lg text-[#B8894A] hover:bg-[var(--surface-3)]"
+              title={darkMode ? "الوضع الفاتح" : "الوضع الداكن"}
+            >
+              {darkMode ? <Sun size={20} /> : <Moon size={20} />}
+            </button>
             <button
               onClick={() => setCurrentUser(null)}
               className="p-2 rounded-lg text-[#B23A3A] hover:bg-[#FBEAEA]"
@@ -331,7 +432,7 @@ export default function App() {
 
       <div className="max-w-6xl mx-auto md:flex">
         {/* Sidebar (desktop) */}
-        <aside className="no-print hidden md:flex md:flex-col md:w-56 shrink-0 border-l border-[#F0E6D0] py-4 px-2 gap-1 min-h-[calc(100vh-61px)]">
+        <aside className="no-print hidden md:flex md:flex-col md:w-56 shrink-0 border-l border-[var(--border)] py-4 px-2 gap-1 min-h-[calc(100vh-61px)]">
           {visibleNav.map((n) => (
             <NavBtn key={n.key} item={n} active={view === n.key} onClick={() => setView(n.key)} />
           ))}
@@ -341,13 +442,13 @@ export default function App() {
         {mobileNavOpen && (
           <div className="no-print fixed inset-0 z-40 md:hidden">
             <div className="absolute inset-0 bg-black/30" onClick={() => setMobileNavOpen(false)} />
-            <div className="absolute right-0 top-0 bottom-0 w-64 bg-white shadow-xl p-3 flex flex-col gap-1">
+            <div className="absolute right-0 top-0 bottom-0 w-64 bg-[var(--surface)] shadow-xl p-3 flex flex-col gap-1">
               <div className="flex items-center justify-between px-2 py-2 mb-2">
                 <div className="flex items-center gap-2">
                   <PerfumeMark size={28} />
                   <span className="font-bold text-[#5B2333]" style={{ fontFamily: "'Amiri', serif" }}>عطورنا</span>
                 </div>
-                <button onClick={() => setMobileNavOpen(false)} className="p-1 text-[#8A7B6C]">
+                <button onClick={() => setMobileNavOpen(false)} className="p-1 text-[var(--muted)]">
                   <X size={20} />
                 </button>
               </div>
@@ -379,7 +480,7 @@ export default function App() {
                 await persistProducts(updatedProducts);
                 await persistSales([sale, ...sales]);
                 await persistSeq(newSeq);
-                showToast("تم تسجيل المبيعة وإصدار الفاتورة بنجاح");
+                showToast("تم تسجيل عملية البيع وإصدار الفاتورة بنجاح");
                 setPrintPayload({ type: "invoice", data: sale });
                 setView("records");
               }}
@@ -397,6 +498,14 @@ export default function App() {
               }}
               onPrintInvoice={(sale) => setPrintPayload({ type: "invoice", data: sale })}
               onPrintRecord={(sellerName, list) => setPrintPayload({ type: "record", data: { sellerName, list } })}
+              onCollectPayment={async (id, amount) => {
+                const sale = sales.find((s) => s.id === id);
+                if (!sale) return;
+                const collected = Math.min(sale.total, sale.collected + amount);
+                await updateSale(id, { collected, remaining: Math.max(0, sale.total - collected) });
+                showToast("تم تسجيل التحصيل");
+              }}
+              onEditSale={(sale) => setEditingSale(sale)}
             />
           )}
           {view === "stats" && <Stats sales={sales} users={users} currentUser={currentUser} isAdmin={isAdmin} />}
@@ -443,7 +552,7 @@ export default function App() {
       </div>
 
       {/* Mobile bottom nav */}
-      <nav className="no-print md:hidden fixed bottom-0 inset-x-0 z-30 bg-white border-t border-[#F0E6D0] flex justify-around py-1.5">
+      <nav className="no-print md:hidden fixed bottom-0 inset-x-0 z-30 bg-[var(--surface)] border-t border-[var(--border)] flex justify-around py-1.5">
         {visibleNav.slice(0, 5).map((n) => {
           const Icon = n.icon;
           const active = view === n.key;
@@ -477,7 +586,7 @@ function NavBtn({ item, active, onClick }) {
     <button
       onClick={onClick}
       className={`flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-sm font-semibold text-right transition ${
-        active ? "bg-[#5B2333] text-white" : "text-[#4A3F35] hover:bg-[#F7F1E6]"
+        active ? "bg-[#5B2333] text-white" : "text-[var(--text)] hover:bg-[var(--surface-3)]"
       }`}
     >
       <Icon size={18} />
@@ -491,22 +600,46 @@ function GlobalStyle() {
     <style>{`
       @import url('https://fonts.googleapis.com/css2?family=Amiri:wght@400;700&family=Tajawal:wght@400;500;700;900&display=swap');
       * { font-family: 'Tajawal', sans-serif; }
-      body { background: #fff; }
+
+      :root {
+        --bg: #ffffff;
+        --surface: #ffffff;
+        --surface-2: #FBF9F5;
+        --surface-3: #F7F1E6;
+        --border: #F0E6D0;
+        --text: #2B211A;
+        --muted: #8A7B6C;
+        --input-bg: #FBF9F5;
+      }
+      html.dark {
+        --bg: #16110F;
+        --surface: #211A18;
+        --surface-2: #291F1C;
+        --surface-3: #2F2420;
+        --border: #3D2E28;
+        --text: #F3E9DE;
+        --muted: #C2AC9B;
+        --input-bg: #291F1C;
+      }
+      html, body { background: var(--bg); }
+      body { color: var(--text); transition: background-color .2s ease, color .2s ease; }
+
       ::-webkit-scrollbar { width: 8px; height: 8px; }
-      ::-webkit-scrollbar-thumb { background: #E3D6BE; border-radius: 8px; }
+      ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 8px; }
       @media print {
         .no-print { display: none !important; }
-        body { background: white !important; }
+        html, body { background: white !important; }
       }
     `}</style>
   );
 }
 
+
 /* ---------------------------------- Dashboard ---------------------------------- */
 
 function Dashboard({ sales, products, currentUser, setView }) {
   const isAdmin = currentUser.role === "admin";
-  const mySales = isAdmin ? sales : sales.filter((s) => s.sellerId === currentUser.id);
+  const mySales = sales; // everyone can see overall store sales now
   const totalRevenue = mySales.reduce((a, s) => a + s.total, 0);
   const totalCollected = mySales.reduce((a, s) => a + s.collected, 0);
   const totalRemaining = mySales.reduce((a, s) => a + s.remaining, 0);
@@ -515,8 +648,8 @@ function Dashboard({ sales, products, currentUser, setView }) {
   return (
     <div className="space-y-5">
       <div>
-        <h2 className="text-xl font-bold text-[#2B211A]">مرحباً، {currentUser.name} 🌸</h2>
-        <p className="text-sm text-[#8A7B6C]">نظرة عامة على {isAdmin ? "أداء المتجر" : "مبيعاتك"}</p>
+        <h2 className="text-xl font-bold text-[var(--text)]">مرحباً، {currentUser.name} 🌸</h2>
+        <p className="text-sm text-[var(--muted)]">نظرة عامة على أداء المتجر</p>
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -545,7 +678,7 @@ function Dashboard({ sales, products, currentUser, setView }) {
             </div>
           )}
           <button onClick={() => setView("newsale")} className="mt-3 text-sm font-semibold text-[#B8894A] flex items-center gap-1">
-            <Plus size={16} /> تسجيل مبيعة جديدة
+            <Plus size={16} /> تسجيل عملية بيع جديدة
           </button>
         </Card>
 
@@ -597,10 +730,6 @@ function NewSale({ products, users, currentUser, sales, seq, onCreate }) {
   const [qty, setQty] = useState(1);
   const [unitPrice, setUnitPrice] = useState("");
   const [collected, setCollected] = useState("");
-
-  useEffect(() => {
-    if (!isAdmin) setSellerId(currentUser.id);
-  }, [isAdmin, currentUser.id]);
 
   const seller = users.find((u) => u.id === sellerId) || currentUser;
   const selectedProduct = products.find((p) => p.id === productId);
@@ -656,18 +785,16 @@ function NewSale({ products, users, currentUser, sales, seq, onCreate }) {
 
   return (
     <div className="space-y-5 max-w-2xl">
-      <h2 className="text-xl font-bold">تسجيل مبيعة جديدة</h2>
+      <h2 className="text-xl font-bold">تسجيل عملية بيع جديدة</h2>
 
       <Card className="p-4 space-y-4">
-        {isAdmin && (
-          <Field label="البائع">
-            <select className={inputCls} value={sellerId} onChange={(e) => setSellerId(e.target.value)}>
-              {sellers.map((s) => (
-                <option key={s.id} value={s.id}>{s.name}</option>
-              ))}
-            </select>
-          </Field>
-        )}
+        <Field label="البائع">
+          <select className={inputCls} value={sellerId} onChange={(e) => setSellerId(e.target.value)}>
+            {sellers.map((s) => (
+              <option key={s.id} value={s.id}>{s.name}</option>
+            ))}
+          </select>
+        </Field>
 
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           <div className="col-span-2 md:col-span-2">
@@ -730,7 +857,7 @@ function NewSale({ products, users, currentUser, sales, seq, onCreate }) {
             <span className={`font-bold ${remaining > 0 ? "text-[#B23A3A]" : "text-[#3F7D57]"}`}>{fmt(remaining)} د.ك</span>
           </div>
           <Btn onClick={submit} className="w-full">
-            <Receipt size={16} /> إصدار الفاتورة وحفظ المبيعة
+            <Receipt size={16} /> إصدار الفاتورة وحفظ عملية البيع
           </Btn>
         </Card>
       )}
@@ -740,9 +867,11 @@ function NewSale({ products, users, currentUser, sales, seq, onCreate }) {
 
 /* ---------------------------------- Sales Records ---------------------------------- */
 
-function SalesRecords({ sales, users, currentUser, isAdmin, onDelete, onPrintInvoice, onPrintRecord }) {
-  const [sellerFilter, setSellerFilter] = useState(isAdmin ? "all" : currentUser.id);
+function SalesRecords({ sales, users, currentUser, isAdmin, onDelete, onPrintInvoice, onPrintRecord, onCollectPayment, onEditSale }) {
+  const [sellerFilter, setSellerFilter] = useState("all");
   const [search, setSearch] = useState("");
+  const [payingId, setPayingId] = useState(null);
+  const [payAmount, setPayAmount] = useState("");
 
   const sellers = useMemo(() => {
     const map = new Map();
@@ -750,35 +879,67 @@ function SalesRecords({ sales, users, currentUser, isAdmin, onDelete, onPrintInv
     return Array.from(map.entries());
   }, [sales]);
 
-  let list = isAdmin ? sales : sales.filter((s) => s.sellerId === currentUser.id);
-  if (isAdmin && sellerFilter !== "all") list = list.filter((s) => s.sellerId === sellerFilter);
+  let list = sales;
+  if (sellerFilter !== "all") list = list.filter((s) => s.sellerId === sellerFilter);
   if (search.trim()) {
     const q = search.trim().toLowerCase();
     list = list.filter((s) => s.invoiceNo.toLowerCase().includes(q) || s.sellerName.toLowerCase().includes(q));
   }
 
-  const sellerName = isAdmin && sellerFilter !== "all" ? sellers.find(([id]) => id === sellerFilter)?.[1] : currentUser.name;
+  const sellerName = sellerFilter !== "all" ? sellers.find(([id]) => id === sellerFilter)?.[1] : currentUser.name;
+
+  const submitPayment = (sale) => {
+    const amount = Number(payAmount);
+    if (!amount || amount <= 0) return;
+    onCollectPayment(sale.id, amount);
+    setPayingId(null);
+    setPayAmount("");
+  };
+
+  const PayRow = ({ sale }) => (
+    <div className="mt-2 flex gap-2 items-center bg-[var(--surface-2)] rounded-xl p-2">
+      <input
+        type="number"
+        min="0"
+        step="0.001"
+        autoFocus
+        className={inputCls + " flex-1 !py-2"}
+        placeholder={`حتى ${fmt(sale.remaining)} د.ك`}
+        value={payAmount}
+        onChange={(e) => setPayAmount(e.target.value)}
+      />
+      <Btn className="!py-2 !px-3 text-xs" onClick={() => submitPayment(sale)}>
+        <Check size={14} /> تأكيد
+      </Btn>
+      <button onClick={() => { setPayingId(null); setPayAmount(""); }} className="p-2 text-[var(--muted)]">
+        <X size={16} />
+      </button>
+    </div>
+  );
 
   return (
     <div className="space-y-4">
       <div className="flex items-center justify-between flex-wrap gap-2">
         <h2 className="text-xl font-bold">سجل المبيعات</h2>
-        <Btn variant="outline" onClick={() => onPrintRecord(isAdmin && sellerFilter === "all" ? "الكل" : sellerName, list)}>
-          <Printer size={16} /> طباعة السجل PDF
-        </Btn>
+        <div className="flex gap-2">
+          <Btn variant="outline" onClick={() => onPrintRecord(sellerFilter === "all" ? "الكل" : sellerName, list)}>
+            <Printer size={16} /> طباعة السجل PDF
+          </Btn>
+          <Btn variant="ghost" onClick={() => exportSalesCsv(sellerFilter === "all" ? "الكل" : sellerName, list)}>
+            <Download size={16} /> تصدير Excel
+          </Btn>
+        </div>
       </div>
 
       <div className="flex flex-col sm:flex-row gap-2">
-        {isAdmin && (
-          <select className={inputCls + " sm:w-56"} value={sellerFilter} onChange={(e) => setSellerFilter(e.target.value)}>
-            <option value="all">كل البائعين</option>
-            {sellers.map(([id, name]) => (
-              <option key={id} value={id}>{name}</option>
-            ))}
-          </select>
-        )}
+        <select className={inputCls + " sm:w-56"} value={sellerFilter} onChange={(e) => setSellerFilter(e.target.value)}>
+          <option value="all">كل البائعين</option>
+          {sellers.map(([id, name]) => (
+            <option key={id} value={id}>{name}</option>
+          ))}
+        </select>
         <div className="relative flex-1">
-          <Search size={16} className="absolute right-3 top-1/2 -translate-y-1/2 text-[#8A7B6C]" />
+          <Search size={16} className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--muted)]" />
           <input className={inputCls + " pr-9"} placeholder="بحث برقم الفاتورة أو اسم البائع..." value={search} onChange={(e) => setSearch(e.target.value)} />
         </div>
       </div>
@@ -794,23 +955,32 @@ function SalesRecords({ sales, users, currentUser, isAdmin, onDelete, onPrintInv
                 <div className="flex justify-between items-start mb-2">
                   <div>
                     <p className="font-bold">{s.invoiceNo}</p>
-                    <p className="text-xs text-[#8A7B6C]">{s.sellerName} · {dateLabel(s.date)} {timeLabel(s.date)}</p>
+                    <p className="text-xs text-[var(--muted)]">{s.sellerName} · {dateLabel(s.date)} {timeLabel(s.date)}</p>
                   </div>
                   <p className="font-extrabold text-[#B8894A]">{fmt(s.total)} د.ك</p>
                 </div>
-                <div className="text-xs text-[#8A7B6C] mb-2">{s.items.map((i) => i.name).join("، ")}</div>
+                <div className="text-xs text-[var(--muted)] mb-2">{s.items.map((i) => i.name).join("، ")}</div>
                 <div className="flex justify-between text-xs mb-3">
                   <span className="text-[#3F7D57] font-semibold">محصل: {fmt(s.collected)}</span>
                   <span className="text-[#B23A3A] font-semibold">متبقي: {fmt(s.remaining)}</span>
                 </div>
-                <div className="flex gap-2">
+                <div className="flex gap-2 flex-wrap">
                   <Btn variant="ghost" className="flex-1 py-2 text-xs" onClick={() => onPrintInvoice(s)}>
                     <Printer size={14} /> طباعة الفاتورة
                   </Btn>
+                  {s.remaining > 0 && (
+                    <Btn variant="dark" className="flex-1 py-2 text-xs" onClick={() => { setPayingId(s.id); setPayAmount(""); }}>
+                      <Wallet size={14} /> تسجيل تحصيل
+                    </Btn>
+                  )}
                   {isAdmin && (
-                    <button onClick={() => onDelete(s.id)} className="p-2.5 rounded-xl bg-[#FBEAEA] text-[#B23A3A]"><Trash2 size={16} /></button>
+                    <>
+                      <button onClick={() => onEditSale(s)} className="p-2.5 rounded-xl bg-[var(--surface-3)] text-[#5B2333]"><Pencil size={16} /></button>
+                      <button onClick={() => onDelete(s.id)} className="p-2.5 rounded-xl bg-[#FBEAEA] text-[#B23A3A]"><Trash2 size={16} /></button>
+                    </>
                   )}
                 </div>
+                {payingId === s.id && <PayRow sale={s} />}
               </Card>
             ))}
           </div>
@@ -819,7 +989,7 @@ function SalesRecords({ sales, users, currentUser, isAdmin, onDelete, onPrintInv
           <Card className="hidden md:block overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
-                <tr className="text-right text-[#8A7B6C] border-b border-[#F0E6D0]">
+                <tr className="text-right text-[var(--muted)] border-b border-[var(--border)]">
                   <th className="px-4 py-3 font-semibold">رقم الفاتورة</th>
                   <th className="px-4 py-3 font-semibold">البائع</th>
                   <th className="px-4 py-3 font-semibold">التاريخ</th>
@@ -832,21 +1002,38 @@ function SalesRecords({ sales, users, currentUser, isAdmin, onDelete, onPrintInv
               </thead>
               <tbody>
                 {list.map((s) => (
-                  <tr key={s.id} className="border-b border-[#F5EEDF] last:border-0 hover:bg-[#FBF9F5]">
-                    <td className="px-4 py-3 font-bold">{s.invoiceNo}</td>
-                    <td className="px-4 py-3">{s.sellerName}</td>
-                    <td className="px-4 py-3 text-[#8A7B6C]">{dateLabel(s.date)}</td>
-                    <td className="px-4 py-3 text-[#8A7B6C] max-w-[220px] truncate">{s.items.map((i) => i.name).join("، ")}</td>
-                    <td className="px-4 py-3 font-bold text-[#B8894A]">{fmt(s.total)}</td>
-                    <td className="px-4 py-3 text-[#3F7D57] font-semibold">{fmt(s.collected)}</td>
-                    <td className="px-4 py-3 text-[#B23A3A] font-semibold">{fmt(s.remaining)}</td>
-                    <td className="px-4 py-3">
-                      <div className="flex items-center gap-2">
-                        <button onClick={() => onPrintInvoice(s)} className="p-1.5 rounded-lg text-[#5B2333] hover:bg-[#F7F1E6]"><Printer size={16} /></button>
-                        {isAdmin && <button onClick={() => onDelete(s.id)} className="p-1.5 rounded-lg text-[#B23A3A] hover:bg-[#FBEAEA]"><Trash2 size={16} /></button>}
-                      </div>
-                    </td>
-                  </tr>
+                  <React.Fragment key={s.id}>
+                    <tr className="border-b border-[var(--border)] last:border-0 hover:bg-[var(--surface-2)]">
+                      <td className="px-4 py-3 font-bold">{s.invoiceNo}</td>
+                      <td className="px-4 py-3">{s.sellerName}</td>
+                      <td className="px-4 py-3 text-[var(--muted)]">{dateLabel(s.date)}</td>
+                      <td className="px-4 py-3 text-[var(--muted)] max-w-[220px] truncate">{s.items.map((i) => i.name).join("، ")}</td>
+                      <td className="px-4 py-3 font-bold text-[#B8894A]">{fmt(s.total)}</td>
+                      <td className="px-4 py-3 text-[#3F7D57] font-semibold">{fmt(s.collected)}</td>
+                      <td className="px-4 py-3 text-[#B23A3A] font-semibold">{fmt(s.remaining)}</td>
+                      <td className="px-4 py-3">
+                        <div className="flex items-center gap-2">
+                          <button onClick={() => onPrintInvoice(s)} className="p-1.5 rounded-lg text-[#5B2333] hover:bg-[var(--surface-3)]" title="طباعة"><Printer size={16} /></button>
+                          {s.remaining > 0 && (
+                            <button onClick={() => { setPayingId(payingId === s.id ? null : s.id); setPayAmount(""); }} className="p-1.5 rounded-lg text-[#3F7D57] hover:bg-[var(--surface-3)]" title="تسجيل تحصيل"><Wallet size={16} /></button>
+                          )}
+                          {isAdmin && (
+                            <>
+                              <button onClick={() => onEditSale(s)} className="p-1.5 rounded-lg text-[#5B2333] hover:bg-[var(--surface-3)]" title="تعديل"><Pencil size={16} /></button>
+                              <button onClick={() => onDelete(s.id)} className="p-1.5 rounded-lg text-[#B23A3A] hover:bg-[#FBEAEA]" title="حذف"><Trash2 size={16} /></button>
+                            </>
+                          )}
+                        </div>
+                      </td>
+                    </tr>
+                    {payingId === s.id && (
+                      <tr>
+                        <td colSpan={8} className="px-4 pb-3">
+                          <PayRow sale={s} />
+                        </td>
+                      </tr>
+                    )}
+                  </React.Fragment>
                 ))}
               </tbody>
             </table>
@@ -860,11 +1047,11 @@ function SalesRecords({ sales, users, currentUser, isAdmin, onDelete, onPrintInv
 /* ---------------------------------- Stats ---------------------------------- */
 
 function Stats({ sales, users, currentUser, isAdmin }) {
-  const [sellerFilter, setSellerFilter] = useState(isAdmin ? "all" : currentUser.id);
+  const [sellerFilter, setSellerFilter] = useState("all");
   const sellers = users.filter((u) => u.role === "seller" || u.role === "admin");
 
-  let list = isAdmin ? sales : sales.filter((s) => s.sellerId === currentUser.id);
-  if (isAdmin && sellerFilter !== "all") list = list.filter((s) => s.sellerId === sellerFilter);
+  let list = sales;
+  if (sellerFilter !== "all") list = list.filter((s) => s.sellerId === sellerFilter);
 
   const totalRevenue = list.reduce((a, s) => a + s.total, 0);
   const totalCollected = list.reduce((a, s) => a + s.collected, 0);
@@ -872,14 +1059,14 @@ function Stats({ sales, users, currentUser, isAdmin }) {
 
   const bySeller = useMemo(() => {
     const map = new Map();
-    (isAdmin ? sales : list).forEach((s) => {
+    sales.forEach((s) => {
       const cur = map.get(s.sellerName) || { name: s.sellerName, total: 0, count: 0 };
       cur.total += s.total;
       cur.count += 1;
       map.set(s.sellerName, cur);
     });
     return Array.from(map.values());
-  }, [sales, list, isAdmin]);
+  }, [sales]);
 
   const byProduct = useMemo(() => {
     const map = new Map();
@@ -895,12 +1082,10 @@ function Stats({ sales, users, currentUser, isAdmin }) {
     <div className="space-y-5">
       <div className="flex items-center justify-between flex-wrap gap-2">
         <h2 className="text-xl font-bold">إحصائيات المبيعات</h2>
-        {isAdmin && (
-          <select className={inputCls + " sm:w-56"} value={sellerFilter} onChange={(e) => setSellerFilter(e.target.value)}>
-            <option value="all">كل البائعين</option>
-            {sellers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-          </select>
-        )}
+        <select className={inputCls + " sm:w-56"} value={sellerFilter} onChange={(e) => setSellerFilter(e.target.value)}>
+          <option value="all">كل البائعين</option>
+          {sellers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+        </select>
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -910,7 +1095,7 @@ function Stats({ sales, users, currentUser, isAdmin }) {
         <StatCard label="المتبقي" value={fmt(totalRemaining) + " د.ك"} color="#B23A3A" />
       </div>
 
-      {isAdmin && sellerFilter === "all" && bySeller.length > 0 && (
+      {sellerFilter === "all" && bySeller.length > 0 && (
         <Card className="p-4">
           <h3 className="font-bold mb-3">مبيعات كل بائع</h3>
           <div style={{ width: "100%", height: 260 }}>
@@ -1188,13 +1373,121 @@ function BackupPage({ data, onRestore }) {
 
 /* ---------------------------------- Print Area ---------------------------------- */
 
+/* ---------------------------------- Edit Sale (admin) ---------------------------------- */
+
+function EditSaleModal({ sale, products, onClose, onSave }) {
+  const [items, setItems] = useState(sale.items.map((i) => ({ ...i })));
+  const [collected, setCollected] = useState(String(sale.collected));
+  const [productId, setProductId] = useState("");
+  const [qty, setQty] = useState(1);
+  const [unitPrice, setUnitPrice] = useState("");
+
+  const selectedProduct = products.find((p) => p.id === productId);
+  useEffect(() => {
+    if (selectedProduct) setUnitPrice(String(selectedProduct.price));
+  }, [productId]); // eslint-disable-line
+
+  // Stock available for a product = current stock + whatever this invoice already reserved for it.
+  const availableFor = (pid) => {
+    const p = products.find((x) => x.id === pid);
+    if (!p) return 0;
+    const reserved = sale.items.filter((i) => i.productId === pid).reduce((a, i) => a + i.qty, 0);
+    const usedInEdit = items.filter((i) => i.productId === pid).reduce((a, i) => a + i.qty, 0);
+    return p.stock + reserved - usedInEdit;
+  };
+
+  const addLine = () => {
+    if (!selectedProduct) return;
+    const q = Number(qty);
+    const price = Number(unitPrice);
+    if (!q || q <= 0) return;
+    if (q > availableFor(productId)) return;
+    setItems((c) => [...c, { lineId: uid(), productId: selectedProduct.id, name: selectedProduct.name, qty: q, price, total: q * price }]);
+    setProductId("");
+    setQty(1);
+    setUnitPrice("");
+  };
+
+  const removeLine = (lineId) => setItems((c) => c.filter((l) => l.lineId !== lineId));
+
+  const updateLineQty = (lineId, newQty) => {
+    setItems((c) => c.map((l) => (l.lineId === lineId ? { ...l, qty: newQty, total: newQty * l.price } : l)));
+  };
+
+  const total = items.reduce((a, l) => a + l.total, 0);
+
+  return (
+    <div className="fixed inset-0 z-[9998] flex items-center justify-center bg-black/50 p-4" dir="rtl">
+      <div className="bg-[var(--surface)] rounded-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto p-5">
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-lg font-bold">تعديل فاتورة {sale.invoiceNo}</h3>
+          <button onClick={onClose} className="p-1 text-[var(--muted)]"><X size={20} /></button>
+        </div>
+
+        <div className="space-y-2 mb-4">
+          {items.map((l) => (
+            <div key={l.lineId} className="flex items-center gap-2 bg-[var(--surface-2)] rounded-xl px-3 py-2">
+              <div className="flex-1">
+                <p className="text-sm font-semibold">{l.name}</p>
+                <p className="text-xs text-[var(--muted)]">{fmt(l.price)} د.ك / وحدة</p>
+              </div>
+              <input
+                type="number"
+                min="1"
+                className="w-16 rounded-lg border border-[var(--border)] bg-[var(--input-bg)] px-2 py-1 text-sm text-center"
+                value={l.qty}
+                onChange={(e) => updateLineQty(l.lineId, Math.max(1, Number(e.target.value) || 1))}
+              />
+              <p className="text-sm font-bold text-[#B8894A] w-20 text-left">{fmt(l.total)}</p>
+              <button onClick={() => removeLine(l.lineId)} className="text-[#B23A3A]"><Trash2 size={16} /></button>
+            </div>
+          ))}
+          {items.length === 0 && <EmptyState text="لا توجد عناصر — أضف منتجاً" />}
+        </div>
+
+        <div className="grid grid-cols-4 gap-2 mb-2">
+          <select className={inputCls + " col-span-2"} value={productId} onChange={(e) => setProductId(e.target.value)}>
+            <option value="">اختر منتج...</option>
+            {products.map((p) => (
+              <option key={p.id} value={p.id} disabled={availableFor(p.id) <= 0}>
+                {p.name} — متبقي {availableFor(p.id)}
+              </option>
+            ))}
+          </select>
+          <input type="number" min="1" className={inputCls} value={qty} onChange={(e) => setQty(e.target.value)} placeholder="الكمية" />
+          <input type="number" min="0" step="0.001" className={inputCls} value={unitPrice} onChange={(e) => setUnitPrice(e.target.value)} placeholder="السعر" />
+        </div>
+        <Btn variant="ghost" onClick={addLine} disabled={!productId} className="w-full mb-4">
+          <Plus size={16} /> إضافة منتج
+        </Btn>
+
+        <div className="flex justify-between text-sm mb-2">
+          <span className="text-[var(--muted)]">الإجمالي الجديد</span>
+          <span className="font-extrabold text-lg">{fmt(total)} د.ك</span>
+        </div>
+        <Field label="المبلغ المحصل (د.ك)">
+          <input type="number" min="0" step="0.001" className={inputCls} value={collected} onChange={(e) => setCollected(e.target.value)} />
+        </Field>
+
+        <div className="flex gap-2 mt-4">
+          <Btn className="flex-1" onClick={() => onSave(items, Number(collected) || 0)}>
+            <Save size={16} /> حفظ التعديلات
+          </Btn>
+          <Btn variant="outline" onClick={onClose}>إلغاء</Btn>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function PrintArea({ payload, settings, onClose }) {
   useEffect(() => {
-    const t = setTimeout(() => window.print(), 200);
     const onAfterPrint = () => onClose();
     window.addEventListener("afterprint", onAfterPrint);
-    return () => { clearTimeout(t); window.removeEventListener("afterprint", onAfterPrint); };
+    return () => window.removeEventListener("afterprint", onAfterPrint);
   }, []); // eslint-disable-line
+
+  const handlePrint = () => window.print();
 
   return (
     <div className="print-area">
@@ -1202,16 +1495,35 @@ function PrintArea({ payload, settings, onClose }) {
         @page { size: A4; margin: 14mm; }
         @media print {
           .print-area { position: fixed; inset: 0; background: white; z-index: 9999; overflow: visible; }
+          .print-toolbar { display: none !important; }
+          .print-sheet { width: auto; max-width: none; padding: 0; box-shadow: none; }
         }
         @media screen {
-          .print-area { position: fixed; inset: 0; background: rgba(0,0,0,0.4); z-index: 9999; display:flex; align-items:flex-start; justify-content:center; overflow:auto; padding: 24px 12px; }
-          .print-sheet { background:white; width: 210mm; min-height: 297mm; padding: 14mm; box-shadow: 0 10px 40px rgba(0,0,0,0.3); }
+          .print-area { position: fixed; inset: 0; background: rgba(0,0,0,0.55); z-index: 9999; display: flex; flex-direction: column; align-items: center; overflow: auto; padding: 0 0 32px; }
+          .print-toolbar { position: sticky; top: 0; z-index: 2; width: 100%; display: flex; justify-content: center; gap: 8px; padding: 12px; background: rgba(0,0,0,0.55); backdrop-filter: blur(2px); }
+          .print-sheet { background: white; width: calc(100% - 24px); max-width: 210mm; min-height: auto; padding: 16px; box-shadow: 0 10px 40px rgba(0,0,0,0.3); margin-top: 4px; }
+        }
+        @media screen and (min-width: 700px) {
+          .print-sheet { padding: 14mm; min-height: 297mm; }
         }
       `}</style>
-      <div className="print-sheet" dir="rtl" style={{ fontFamily: "'Tajawal', sans-serif", color: "#2B211A" }}>
-        <button onClick={onClose} className="no-print" style={{ position: "absolute", top: 16, left: 16, background: "#2B211A", color: "white", borderRadius: 8, padding: "6px 12px", fontSize: 12 }}>
+
+      <div className="print-toolbar no-print">
+        <button
+          onClick={handlePrint}
+          style={{ background: "#B8894A", color: "white", borderRadius: 10, padding: "10px 18px", fontSize: 13, fontWeight: 700, display: "flex", alignItems: "center", gap: 6 }}
+        >
+          طباعة / حفظ PDF
+        </button>
+        <button
+          onClick={onClose}
+          style={{ background: "#2B211A", color: "white", borderRadius: 10, padding: "10px 18px", fontSize: 13, fontWeight: 700 }}
+        >
           إغلاق
         </button>
+      </div>
+
+      <div className="print-sheet" dir="rtl" style={{ fontFamily: "'Tajawal', sans-serif", color: "#2B211A" }}>
         {payload.type === "invoice" ? (
           <InvoiceDoc sale={payload.data} settings={settings} />
         ) : (
