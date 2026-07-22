@@ -3,7 +3,7 @@ import {
   Plus, Trash2, Printer, Download, Upload, LogOut, Package, Receipt,
   BarChart3, Settings as SettingsIcon, Users as UsersIcon, Search, X, Check,
   Menu, Save, Image as ImageIcon, ShoppingCart, Home, AlertTriangle, Eye, EyeOff,
-  Sun, Moon, Pencil, Wallet, Tag, MessageSquare
+  Sun, Moon, Pencil, Wallet, Tag, MessageSquare, Megaphone, Gift, Ban
 } from "lucide-react";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
@@ -58,6 +58,20 @@ async function storeSet(key, value, shared = true) {
 }
 
 const COLORS = ["#B8894A", "#5B2333", "#3F7D57", "#8A7B6C", "#C9A227", "#7A4B63"];
+
+function getSeenAnnouncementIds(userId) {
+  try {
+    const raw = window.localStorage.getItem(`atourna_seen_announcements_${userId}`);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+function markAnnouncementSeen(userId, announcementId) {
+  const seen = new Set(getSeenAnnouncementIds(userId));
+  seen.add(announcementId);
+  window.localStorage.setItem(`atourna_seen_announcements_${userId}`, JSON.stringify(Array.from(seen)));
+}
 
 function exportSalesCsv(label, list) {
   const header = ["رقم الفاتورة", "البائع", "التاريخ", "المنتجات", "الإجمالي", "المحصل", "المتبقي"];
@@ -265,8 +279,8 @@ function RecoverModal({ users, onRecover, onClose }) {
   };
 
   return (
-    <div className="fixed inset-0 z-[9998] flex items-center justify-center bg-black/50 p-4" dir="rtl">
-      <div className="bg-[var(--surface)] rounded-2xl w-full max-w-sm p-6">
+    <div className="fixed inset-0 z-[9998] flex items-center justify-center bg-black/50 p-4 announce-backdrop" dir="rtl">
+      <div className="bg-[var(--surface)] rounded-2xl w-full max-w-sm p-6 announce-pop">
         <div className="flex items-center justify-between mb-4">
           <h3 className="text-lg font-bold">استعادة الحساب</h3>
           <button onClick={onClose} className="p-1 text-[var(--muted)]"><X size={20} /></button>
@@ -390,6 +404,7 @@ const NAV_ITEMS = [
   { key: "records", label: "سجل المبيعات", icon: Receipt, roles: ["admin", "seller"] },
   { key: "stats", label: "الإحصائيات", icon: BarChart3, roles: ["admin", "seller"] },
   { key: "inventory", label: "المخزون", icon: Package, roles: ["admin", "seller"] },
+  { key: "announcements", label: "التعاميم", icon: Megaphone, roles: ["admin", "seller"] },
   { key: "users", label: "المستخدمون", icon: UsersIcon, roles: ["admin"] },
   { key: "settings", label: "الإعدادات", icon: SettingsIcon, roles: ["admin"] },
   { key: "backup", label: "النسخ الاحتياطي", icon: Save, roles: ["admin"] },
@@ -410,6 +425,9 @@ export default function App() {
   const [printPayload, setPrintPayload] = useState(null); // {type:'invoice'|'record', data}
   const [editingSale, setEditingSale] = useState(null);
   const [labelPayload, setLabelPayload] = useState(null); // {product, count}
+  const [announcements, setAnnouncements] = useState([]);
+  const [announcementQueue, setAnnouncementQueue] = useState([]); // ids waiting to be shown as popups
+  const [stockLogs, setStockLogs] = useState([]); // gifted / damaged product adjustments
   const [darkMode, setDarkMode] = useState(false);
   const [toast, setToast] = useState("");
 
@@ -423,8 +441,10 @@ export default function App() {
     const s = await storeGet("perfume_sales", []);
     const sq = await storeGet("perfume_seq", {});
     const st = await storeGet("perfume_settings", { companyName: "عطورنا للعطور والبخور", logo: "", phone: "", address: "", theme: "classic" });
+    const an = await storeGet("perfume_announcements", []);
+    const sl = await storeGet("perfume_stock_logs", []);
 
-    const snapshot = JSON.stringify({ u, p, s, sq, st });
+    const snapshot = JSON.stringify({ u, p, s, sq, st, an, sl });
     if (snapshot === lastSnapshot.current) return; // nothing new, avoid needless re-render
     lastSnapshot.current = snapshot;
 
@@ -433,6 +453,8 @@ export default function App() {
     setSales(s);
     setSeq(sq);
     setSettings(st);
+    setAnnouncements(an);
+    setStockLogs(sl);
     if (isInitial) setLoading(false);
   }, []);
 
@@ -449,12 +471,47 @@ export default function App() {
     return () => clearInterval(interval);
   }, [loadAll]);
 
-  // Dark mode is a per-device preference, not shared business data.
+  // Restore an existing login session (stored only in this browser's own
+  // localStorage, never in the shared business-data store) so refreshing
+  // the page — or the browser restarting the tab — doesn't force a
+  // re-login. The session is just a username pointer; we always look up
+  // the live user record so role/permission changes take effect immediately.
   useEffect(() => {
-    (async () => {
-      const saved = await storeGet("perfume_darkmode", false, false);
-      setDarkMode(!!saved);
-    })();
+    if (currentUser || loading) return;
+    const savedUsername = window.localStorage.getItem("atourna_session_username");
+    if (!savedUsername) return;
+    const match = users.find((u) => u.username === savedUsername);
+    if (match) {
+      setCurrentUser(match);
+    } else if (users.length > 0) {
+      // Account no longer exists — stop trying to auto-restore it.
+      window.localStorage.removeItem("atourna_session_username");
+    }
+  }, [users, loading, currentUser]);
+
+  // Surface any announcement the current user hasn't seen yet as a popup.
+  // This runs whenever the shared announcements list changes — including
+  // while someone is already using the app, thanks to the polling loop —
+  // so a broadcast from the admin appears live without needing a refresh.
+  useEffect(() => {
+    if (!currentUser) return;
+    const seen = new Set(getSeenAnnouncementIds(currentUser.id));
+    const unseen = announcements
+      .filter((a) => !seen.has(a.id) && a.createdById !== currentUser.id)
+      .sort((a, b) => new Date(a.date) - new Date(b.date))
+      .map((a) => a.id);
+    if (unseen.length === 0) return;
+    setAnnouncementQueue((q) => {
+      const merged = Array.from(new Set([...q, ...unseen]));
+      return merged;
+    });
+  }, [announcements, currentUser]);
+
+  // Dark mode is a per-device preference — store it directly in this
+  // browser's own localStorage, never in the shared business-data store.
+  useEffect(() => {
+    const saved = window.localStorage.getItem("atourna_darkmode");
+    setDarkMode(saved === "1");
   }, []);
 
   useEffect(() => {
@@ -468,7 +525,7 @@ export default function App() {
   const toggleDarkMode = () => {
     setDarkMode((d) => {
       const next = !d;
-      storeSet("perfume_darkmode", next, false);
+      window.localStorage.setItem("atourna_darkmode", next ? "1" : "0");
       return next;
     });
   };
@@ -483,6 +540,50 @@ export default function App() {
   const persistSales = async (next) => { setSales(next); await storeSet("perfume_sales", next); };
   const persistSeq = async (next) => { setSeq(next); await storeSet("perfume_seq", next); };
   const persistSettings = async (next) => { setSettings(next); await storeSet("perfume_settings", next); };
+  const persistAnnouncements = async (next) => { setAnnouncements(next); await storeSet("perfume_announcements", next); };
+  const persistStockLogs = async (next) => { setStockLogs(next); await storeSet("perfume_stock_logs", next); };
+
+  const createAnnouncement = async (title, message) => {
+    if (!title.trim() || !message.trim()) return;
+    const announcement = {
+      id: uid(),
+      title: title.trim(),
+      message: message.trim(),
+      date: todayISO(),
+      createdById: currentUser.id,
+      createdByName: currentUser.name,
+    };
+    await persistAnnouncements([announcement, ...announcements]);
+    markAnnouncementSeen(currentUser.id, announcement.id); // don't pop up your own broadcast to yourself
+  };
+
+  const deleteAnnouncement = async (id) => {
+    await persistAnnouncements(announcements.filter((a) => a.id !== id));
+  };
+
+  // Records a gifted or damaged unit against a product and deducts it from stock immediately.
+  const logStockAdjustment = async (product, type, qty, note) => {
+    const q = Math.min(qty, product.stock);
+    if (q <= 0) return;
+    const updatedProducts = products.map((p) => (p.id === product.id ? { ...p, stock: p.stock - q } : p));
+    const log = {
+      id: uid(),
+      productId: product.id,
+      productName: product.name,
+      type, // 'gift' | 'damage'
+      qty: q,
+      note: note?.trim() || "",
+      date: todayISO(),
+      byUserName: currentUser.name,
+    };
+    await persistProducts(updatedProducts);
+    await persistStockLogs([log, ...stockLogs]);
+    showToast(type === "gift" ? "تم تسجيل الهدية وخصمها من المخزون" : "تم تسجيل التالف وخصمه من المخزون");
+  };
+
+  const deleteStockLog = async (id) => {
+    await persistStockLogs(stockLogs.filter((l) => l.id !== id));
+  };
 
   const updateSale = async (id, updates) => {
     const next = sales.map((s) => (s.id === id ? { ...s, ...updates } : s));
@@ -501,6 +602,13 @@ export default function App() {
     };
     const comments = [...(sale.comments || []), comment];
     await updateSale(id, { comments });
+  };
+
+  const deleteSaleComment = async (saleId, commentId) => {
+    const sale = sales.find((s) => s.id === saleId);
+    if (!sale) return;
+    const comments = (sale.comments || []).filter((c) => c.id !== commentId);
+    await updateSale(saleId, { comments });
   };
 
   // Full invoice edit (admin only): replaces items/collected and reconciles stock deltas.
@@ -540,9 +648,11 @@ export default function App() {
   if (loading) {
     return (
       <div className="min-h-screen bg-[var(--bg)] flex items-center justify-center" dir="rtl">
-        <div className="flex flex-col items-center gap-3">
-          <PerfumeMark size={48} />
-          <p className="text-[#8A7B6C] text-sm">جارِ التحميل...</p>
+        <div className="flex flex-col items-center gap-3 fade-in">
+          <div style={{ animation: "popIn .5s ease both" }}>
+            <PerfumeMark size={48} />
+          </div>
+          <p className="text-[var(--muted)] text-sm">جارِ التحميل...</p>
         </div>
       </div>
     );
@@ -557,6 +667,7 @@ export default function App() {
             onComplete={async (adminUser) => {
               const withFlag = { ...adminUser, isPrimaryAdmin: true };
               await persistUsers([withFlag]);
+              window.localStorage.setItem("atourna_session_username", withFlag.username);
               setCurrentUser(withFlag);
               setView("dashboard");
             }}
@@ -564,7 +675,11 @@ export default function App() {
         ) : (
           <LoginScreen
             users={users}
-            onLogin={(u) => { setCurrentUser(u); setView("dashboard"); }}
+            onLogin={(u) => {
+              window.localStorage.setItem("atourna_session_username", u.username);
+              setCurrentUser(u);
+              setView("dashboard");
+            }}
             onRecover={async (username, newPassword) => {
               const idx = users.findIndex((u) => u.username.toLowerCase() === username.toLowerCase() && u.isPrimaryAdmin);
               if (idx === -1) return false;
@@ -609,6 +724,16 @@ export default function App() {
         />
       )}
 
+      {announcementQueue.length > 0 && (
+        <AnnouncementPopup
+          announcement={announcements.find((a) => a.id === announcementQueue[0])}
+          onClose={() => {
+            markAnnouncementSeen(currentUser.id, announcementQueue[0]);
+            setAnnouncementQueue((q) => q.slice(1));
+          }}
+        />
+      )}
+
       {/* Top bar */}
       <header className="no-print sticky top-0 z-30 bg-[var(--bg)]/95 backdrop-blur border-b border-[var(--border)]">
         <div className="max-w-6xl mx-auto flex items-center justify-between px-4 py-3">
@@ -634,7 +759,7 @@ export default function App() {
               {darkMode ? <Sun size={20} /> : <Moon size={20} />}
             </button>
             <button
-              onClick={() => setCurrentUser(null)}
+              onClick={() => { window.localStorage.removeItem("atourna_session_username"); setCurrentUser(null); }}
               className="p-2 rounded-lg text-[#B23A3A] hover:bg-[#FBEAEA]"
               title="تسجيل الخروج"
             >
@@ -680,6 +805,7 @@ export default function App() {
 
         {/* Main content */}
         <main className="no-print flex-1 min-w-0 px-4 py-5 pb-24 md:pb-8">
+        <div key={view} className="view-transition">
           {view === "dashboard" && (
             <Dashboard sales={sales} products={products} currentUser={currentUser} setView={setView} />
           )}
@@ -721,6 +847,7 @@ export default function App() {
               }}
               onEditSale={(sale) => setEditingSale(sale)}
               onAddComment={addSaleComment}
+              onDeleteComment={deleteSaleComment}
             />
           )}
           {view === "stats" && <Stats sales={sales} users={users} products={products} currentUser={currentUser} isAdmin={isAdmin} />}
@@ -730,6 +857,17 @@ export default function App() {
               isAdmin={isAdmin}
               onSave={async (next) => { await persistProducts(next); showToast("تم حفظ المخزون"); }}
               onPrintLabels={(product, count) => setLabelPayload({ product, count })}
+              stockLogs={stockLogs}
+              onLogAdjustment={logStockAdjustment}
+              onDeleteLog={deleteStockLog}
+            />
+          )}
+          {view === "announcements" && (
+            <AnnouncementsPage
+              announcements={announcements}
+              isAdmin={isAdmin}
+              onCreate={createAnnouncement}
+              onDelete={deleteAnnouncement}
             />
           )}
           {view === "users" && isAdmin && (
@@ -740,7 +878,7 @@ export default function App() {
           )}
           {view === "backup" && isAdmin && (
             <BackupPage
-              data={{ users, products, sales, seq, settings }}
+              data={{ users, products, sales, seq, settings, announcements, stockLogs }}
               onRestore={async (next, mode) => {
                 if (mode === "replace") {
                   await persistUsers(next.users || users);
@@ -748,6 +886,8 @@ export default function App() {
                   await persistSales(next.sales || sales);
                   await persistSeq(next.seq || seq);
                   await persistSettings(next.settings || settings);
+                  await persistAnnouncements(next.announcements || announcements);
+                  await persistStockLogs(next.stockLogs || stockLogs);
                 } else {
                   const mergeById = (a, b) => {
                     const map = new Map(a.map((x) => [x.id, x]));
@@ -759,11 +899,14 @@ export default function App() {
                   await persistSales(mergeById(sales, next.sales));
                   await persistSeq({ ...seq, ...(next.seq || {}) });
                   await persistSettings({ ...settings, ...(next.settings || {}) });
+                  await persistAnnouncements(mergeById(announcements, next.announcements));
+                  await persistStockLogs(mergeById(stockLogs, next.stockLogs));
                 }
                 showToast("تمت استعادة البيانات بنجاح");
               }}
             />
           )}
+        </div>
         </main>
       </div>
 
@@ -776,10 +919,13 @@ export default function App() {
             <button
               key={n.key}
               onClick={() => setView(n.key)}
-              className={`flex flex-col items-center gap-0.5 px-2 py-1.5 rounded-lg text-[10px] font-semibold ${active ? "text-[var(--accent)]" : "text-[var(--muted)]"}`}
+              className={`relative flex flex-col items-center gap-0.5 px-2 py-1.5 rounded-lg text-[10px] font-semibold transition-transform ${active ? "text-[var(--accent)] scale-105" : "text-[var(--muted)]"}`}
             >
               <Icon size={20} />
               {n.label}
+              {active && (
+                <span className="absolute -top-1.5 w-1.5 h-1.5 rounded-full bg-[var(--accent)] fade-in" />
+              )}
             </button>
           );
         })}
@@ -787,7 +933,7 @@ export default function App() {
 
       {toast && (
         <div className="no-print fixed bottom-20 md:bottom-6 inset-x-0 flex justify-center z-50">
-          <div className="bg-[#2B211A] text-white text-sm px-4 py-2.5 rounded-xl shadow-lg flex items-center gap-2">
+          <div className="toast-anim bg-[var(--accent-dark)] text-white text-sm px-4 py-2.5 rounded-xl shadow-lg flex items-center gap-2">
             <Check size={16} className="text-[#8FD19E]" /> {toast}
           </div>
         </div>
@@ -850,6 +996,49 @@ function GlobalStyle() {
 
       ::-webkit-scrollbar { width: 8px; height: 8px; }
       ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 8px; }
+
+      /* ---------- motion & interactivity polish ---------- */
+      @keyframes fadeInUp {
+        from { opacity: 0; transform: translateY(6px); }
+        to { opacity: 1; transform: translateY(0); }
+      }
+      @keyframes popIn {
+        from { opacity: 0; transform: scale(0.92); }
+        to { opacity: 1; transform: scale(1); }
+      }
+      @keyframes backdropIn {
+        from { opacity: 0; }
+        to { opacity: 1; }
+      }
+      @keyframes toastUp {
+        from { opacity: 0; transform: translateY(10px) translateX(-50%); }
+        to { opacity: 1; transform: translateY(0) translateX(-50%); }
+      }
+      @keyframes shimmer {
+        0% { background-position: -200px 0; }
+        100% { background-position: 200px 0; }
+      }
+      @keyframes spin { to { transform: rotate(360deg); } }
+
+      .fade-in { animation: fadeInUp .28s ease both; }
+      .view-transition { animation: fadeInUp .22s ease both; }
+      .announce-pop { animation: popIn .25s cubic-bezier(0.34,1.56,0.64,1) both; }
+      .announce-backdrop { animation: backdropIn .2s ease both; }
+      .toast-anim { animation: toastUp .25s cubic-bezier(0.34,1.56,0.64,1) both; }
+
+      .card-hover { transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease; }
+      .card-hover:hover { transform: translateY(-2px); box-shadow: 0 8px 24px rgba(91,35,51,0.10); border-color: var(--accent); }
+
+      button, a, select, .card-hover { -webkit-tap-highlight-color: transparent; }
+      button:not(:disabled) { transition: transform .12s ease, background-color .15s ease, box-shadow .15s ease, opacity .15s ease; }
+      button:not(:disabled):active { transform: scale(0.96); }
+
+      input, select, textarea { transition: border-color .15s ease, box-shadow .15s ease; }
+
+      .spin-slow { animation: spin 1s linear infinite; }
+
+      * { scroll-behavior: smooth; }
+
       @media print {
         .no-print { display: none !important; }
         html, body { background: white !important; }
@@ -928,8 +1117,8 @@ function Dashboard({ sales, products, currentUser, setView }) {
 
 function StatCard({ label, value, color }) {
   return (
-    <Card className="p-4">
-      <p className="text-xs text-[#8A7B6C] mb-1">{label}</p>
+    <Card className="p-4 card-hover">
+      <p className="text-xs text-[var(--muted)] mb-1">{label}</p>
       <p className="text-lg font-extrabold" style={{ color }}>{value}</p>
     </Card>
   );
@@ -1090,13 +1279,11 @@ function NewSale({ products, users, currentUser, sales, seq, onCreate }) {
 
 /* ---------------------------------- Sales Records ---------------------------------- */
 
-function SalesRecords({ sales, users, currentUser, isAdmin, onDelete, onPrintInvoice, onPrintRecord, onCollectPayment, onEditSale, onAddComment }) {
+function SalesRecords({ sales, users, currentUser, isAdmin, onDelete, onPrintInvoice, onPrintRecord, onCollectPayment, onEditSale, onAddComment, onDeleteComment }) {
   const [sellerFilter, setSellerFilter] = useState("all");
   const [search, setSearch] = useState("");
   const [payingId, setPayingId] = useState(null);
-  const [payAmount, setPayAmount] = useState("");
   const [commentingId, setCommentingId] = useState(null);
-  const [commentText, setCommentText] = useState("");
 
   const sellers = useMemo(() => {
     const map = new Map();
@@ -1112,73 +1299,6 @@ function SalesRecords({ sales, users, currentUser, isAdmin, onDelete, onPrintInv
   }
 
   const sellerName = sellerFilter !== "all" ? sellers.find(([id]) => id === sellerFilter)?.[1] : currentUser.name;
-
-  const submitPayment = (sale) => {
-    const amount = Number(payAmount);
-    if (!amount || amount <= 0) return;
-    onCollectPayment(sale.id, amount);
-    setPayingId(null);
-    setPayAmount("");
-  };
-
-  const submitComment = (sale) => {
-    if (!commentText.trim()) return;
-    onAddComment(sale.id, commentText);
-    setCommentText("");
-  };
-
-  const PayRow = ({ sale }) => (
-    <div className="mt-2 flex gap-2 items-center bg-[var(--surface-2)] rounded-xl p-2">
-      <input
-        type="number"
-        min="0"
-        step="0.001"
-        autoFocus
-        className={inputCls + " flex-1 !py-2"}
-        placeholder={`حتى ${fmt(sale.remaining)} د.ك`}
-        value={payAmount}
-        onChange={(e) => setPayAmount(e.target.value)}
-      />
-      <Btn className="!py-2 !px-3 text-xs" onClick={() => submitPayment(sale)}>
-        <Check size={14} /> تأكيد
-      </Btn>
-      <button onClick={() => { setPayingId(null); setPayAmount(""); }} className="p-2 text-[var(--muted)]">
-        <X size={16} />
-      </button>
-    </div>
-  );
-
-  const CommentThread = ({ sale }) => (
-    <div className="mt-2 bg-[var(--surface-2)] rounded-xl p-3 space-y-2">
-      {(sale.comments || []).length === 0 ? (
-        <p className="text-xs text-[var(--muted)]">لا توجد ملاحظات بعد — أول ملاحظة تُسجَّل باسمك</p>
-      ) : (
-        <div className="space-y-2 max-h-48 overflow-y-auto">
-          {sale.comments.map((c) => (
-            <div key={c.id} className="text-xs bg-[var(--surface)] rounded-lg p-2 border border-[var(--border)]">
-              <div className="flex justify-between mb-0.5">
-                <span className="font-semibold text-[var(--accent-dark)]">{c.authorName}</span>
-                <span className="text-[var(--muted)]">{dateLabel(c.date)} {timeLabel(c.date)}</span>
-              </div>
-              <p className="text-[var(--text)]">{c.text}</p>
-            </div>
-          ))}
-        </div>
-      )}
-      <div className="flex gap-2">
-        <input
-          className={inputCls + " flex-1 !py-2 text-xs"}
-          placeholder="اكتب ملاحظة أو تعليق..."
-          value={commentingId === sale.id ? commentText : ""}
-          onChange={(e) => { setCommentingId(sale.id); setCommentText(e.target.value); }}
-          onKeyDown={(e) => { if (e.key === "Enter") submitComment(sale); }}
-        />
-        <Btn className="!py-2 !px-3 text-xs" onClick={() => submitComment(sale)}>
-          <MessageSquare size={14} />
-        </Btn>
-      </div>
-    </div>
-  );
 
   return (
     <div className="space-y-4">
@@ -1252,8 +1372,21 @@ function SalesRecords({ sales, users, currentUser, isAdmin, onDelete, onPrintInv
                     </>
                   )}
                 </div>
-                {payingId === s.id && <PayRow sale={s} />}
-                {commentingId === s.id && <CommentThread sale={s} />}
+                {payingId === s.id && (
+                  <PayRow
+                    sale={s}
+                    onSubmit={(amount) => { onCollectPayment(s.id, amount); setPayingId(null); }}
+                    onCancel={() => setPayingId(null)}
+                  />
+                )}
+                {commentingId === s.id && (
+                  <CommentThread
+                    sale={s}
+                    isAdmin={isAdmin}
+                    onAddComment={(text) => onAddComment(s.id, text)}
+                    onDeleteComment={(commentId) => onDeleteComment(s.id, commentId)}
+                  />
+                )}
               </Card>
             ))}
           </div>
@@ -1308,14 +1441,23 @@ function SalesRecords({ sales, users, currentUser, isAdmin, onDelete, onPrintInv
                     {payingId === s.id && (
                       <tr>
                         <td colSpan={8} className="px-4 pb-3">
-                          <PayRow sale={s} />
+                          <PayRow
+                            sale={s}
+                            onSubmit={(amount) => { onCollectPayment(s.id, amount); setPayingId(null); }}
+                            onCancel={() => setPayingId(null)}
+                          />
                         </td>
                       </tr>
                     )}
                     {commentingId === s.id && (
                       <tr>
                         <td colSpan={8} className="px-4 pb-3">
-                          <CommentThread sale={s} />
+                          <CommentThread
+                            sale={s}
+                            isAdmin={isAdmin}
+                            onAddComment={(text) => onAddComment(s.id, text)}
+                            onDeleteComment={(commentId) => onDeleteComment(s.id, commentId)}
+                          />
                         </td>
                       </tr>
                     )}
@@ -1326,6 +1468,89 @@ function SalesRecords({ sales, users, currentUser, isAdmin, onDelete, onPrintInv
           </Card>
         </>
       )}
+    </div>
+  );
+}
+
+// Defined at module scope (not inside SalesRecords) so React keeps a stable
+// component identity across re-renders — this is what fixes the bug where
+// the on-screen keyboard closed after every typed character.
+function PayRow({ sale, onSubmit, onCancel }) {
+  const [amount, setAmount] = useState("");
+  return (
+    <div className="mt-2 flex gap-2 items-center bg-[var(--surface-2)] rounded-xl p-2">
+      <input
+        type="number"
+        min="0"
+        step="0.001"
+        autoFocus
+        className={inputCls + " flex-1 !py-2"}
+        placeholder={`حتى ${fmt(sale.remaining)} د.ك`}
+        value={amount}
+        onChange={(e) => setAmount(e.target.value)}
+      />
+      <Btn
+        className="!py-2 !px-3 text-xs"
+        onClick={() => {
+          const v = Number(amount);
+          if (!v || v <= 0) return;
+          onSubmit(v);
+        }}
+      >
+        <Check size={14} /> تأكيد
+      </Btn>
+      <button onClick={onCancel} className="p-2 text-[var(--muted)]">
+        <X size={16} />
+      </button>
+    </div>
+  );
+}
+
+function CommentThread({ sale, isAdmin, onAddComment, onDeleteComment }) {
+  const [text, setText] = useState("");
+
+  const submit = () => {
+    if (!text.trim()) return;
+    onAddComment(text);
+    setText("");
+  };
+
+  return (
+    <div className="mt-2 bg-[var(--surface-2)] rounded-xl p-3 space-y-2">
+      {(sale.comments || []).length === 0 ? (
+        <p className="text-xs text-[var(--muted)]">لا توجد ملاحظات بعد — أول ملاحظة تُسجَّل باسمك</p>
+      ) : (
+        <div className="space-y-2 max-h-48 overflow-y-auto">
+          {sale.comments.map((c) => (
+            <div key={c.id} className="text-xs bg-[var(--surface)] rounded-lg p-2 border border-[var(--border)]">
+              <div className="flex justify-between items-start mb-0.5 gap-2">
+                <div className="flex justify-between flex-1">
+                  <span className="font-semibold text-[var(--accent-dark)]">{c.authorName}</span>
+                  <span className="text-[var(--muted)]">{dateLabel(c.date)} {timeLabel(c.date)}</span>
+                </div>
+                {isAdmin && (
+                  <button onClick={() => onDeleteComment(c.id)} className="text-[#B23A3A] shrink-0">
+                    <Trash2 size={12} />
+                  </button>
+                )}
+              </div>
+              <p className="text-[var(--text)]">{c.text}</p>
+            </div>
+          ))}
+        </div>
+      )}
+      <div className="flex gap-2">
+        <input
+          className={inputCls + " flex-1 !py-2 text-xs"}
+          placeholder="اكتب ملاحظة أو تعليق..."
+          value={text}
+          onChange={(e) => setText(e.target.value)}
+          onKeyDown={(e) => { if (e.key === "Enter") submit(); }}
+        />
+        <Btn className="!py-2 !px-3 text-xs" onClick={submit}>
+          <MessageSquare size={14} />
+        </Btn>
+      </div>
     </div>
   );
 }
@@ -1442,10 +1667,14 @@ function Stats({ sales, users, products, currentUser, isAdmin }) {
 
 /* ---------------------------------- Inventory ---------------------------------- */
 
-function Inventory({ products, isAdmin, onSave, onPrintLabels }) {
+function Inventory({ products, isAdmin, onSave, onPrintLabels, stockLogs, onLogAdjustment, onDeleteLog }) {
   const [form, setForm] = useState({ name: "", price: "", cost: "", stock: "", minStock: "5" });
   const [editingId, setEditingId] = useState(null);
   const [labelQty, setLabelQty] = useState({});
+  const [adjustingId, setAdjustingId] = useState(null);
+  const [adjustType, setAdjustType] = useState("gift");
+  const [adjustQty, setAdjustQty] = useState(1);
+  const [adjustNote, setAdjustNote] = useState("");
 
   const resetForm = () => { setForm({ name: "", price: "", cost: "", stock: "", minStock: "5" }); setEditingId(null); };
 
@@ -1460,6 +1689,15 @@ function Inventory({ products, isAdmin, onSave, onPrintLabels }) {
   };
 
   const startEdit = (p) => { setForm({ name: p.name, price: String(p.price), cost: String(p.cost || 0), stock: String(p.stock), minStock: String(p.minStock ?? 5) }); setEditingId(p.id); };
+
+  const submitAdjustment = (product) => {
+    const q = Number(adjustQty);
+    if (!q || q <= 0) return;
+    onLogAdjustment(product, adjustType, q, adjustNote);
+    setAdjustingId(null);
+    setAdjustQty(1);
+    setAdjustNote("");
+  };
 
   return (
     <div className="space-y-5">
@@ -1489,7 +1727,7 @@ function Inventory({ products, isAdmin, onSave, onPrintLabels }) {
       ) : (
         <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
           {products.map((p) => (
-            <Card key={p.id} className="p-4">
+            <Card key={p.id} className="p-4 card-hover">
               <div className="flex justify-between items-start">
                 <div>
                   <p className="font-bold">{p.name}</p>
@@ -1515,6 +1753,54 @@ function Inventory({ products, isAdmin, onSave, onPrintLabels }) {
                 </Btn>
               </div>
 
+              <button
+                onClick={() => { setAdjustingId(adjustingId === p.id ? null : p.id); setAdjustQty(1); setAdjustNote(""); setAdjustType("gift"); }}
+                className="w-full mt-2 text-xs font-semibold text-[var(--accent-dark)] bg-[var(--surface-3)] rounded-lg px-3 py-1.5 flex items-center justify-center gap-1.5"
+              >
+                <Gift size={14} /> تسجيل هدية / تالف
+              </button>
+
+              {adjustingId === p.id && (
+                <div className="mt-2 bg-[var(--surface-2)] rounded-xl p-3 space-y-2 fade-in">
+                  <div className="flex gap-2">
+                    <button
+                      onClick={() => setAdjustType("gift")}
+                      className={`flex-1 py-1.5 rounded-lg text-xs font-semibold flex items-center justify-center gap-1 transition ${adjustType === "gift" ? "bg-[var(--accent)] text-white" : "bg-[var(--surface)] text-[var(--muted)]"}`}
+                    >
+                      <Gift size={13} /> هدية
+                    </button>
+                    <button
+                      onClick={() => setAdjustType("damage")}
+                      className={`flex-1 py-1.5 rounded-lg text-xs font-semibold flex items-center justify-center gap-1 transition ${adjustType === "damage" ? "bg-[#B23A3A] text-white" : "bg-[var(--surface)] text-[var(--muted)]"}`}
+                    >
+                      <Ban size={13} /> تالف
+                    </button>
+                  </div>
+                  <div className="flex gap-2">
+                    <input
+                      type="number"
+                      min="1"
+                      max={p.stock}
+                      className="w-16 rounded-lg border border-[var(--border)] bg-[var(--input-bg)] px-2 py-1.5 text-xs text-center"
+                      value={adjustQty}
+                      onChange={(e) => setAdjustQty(Math.max(1, Math.min(p.stock, Number(e.target.value) || 1)))}
+                    />
+                    <input
+                      className="flex-1 rounded-lg border border-[var(--border)] bg-[var(--input-bg)] px-2 py-1.5 text-xs"
+                      placeholder="سبب / ملاحظة (اختياري)"
+                      value={adjustNote}
+                      onChange={(e) => setAdjustNote(e.target.value)}
+                    />
+                  </div>
+                  <div className="flex gap-2">
+                    <Btn className="!py-1.5 flex-1 text-xs" onClick={() => submitAdjustment(p)}>
+                      <Check size={13} /> تأكيد الخصم من المخزون
+                    </Btn>
+                    <button onClick={() => setAdjustingId(null)} className="p-1.5 text-[var(--muted)]"><X size={16} /></button>
+                  </div>
+                </div>
+              )}
+
               {isAdmin && (
                 <div className="flex gap-2 mt-2">
                   <button onClick={() => startEdit(p)} className="text-xs font-semibold text-[var(--accent-dark)] bg-[var(--surface-3)] rounded-lg px-3 py-1.5">تعديل</button>
@@ -1525,6 +1811,32 @@ function Inventory({ products, isAdmin, onSave, onPrintLabels }) {
           ))}
         </div>
       )}
+
+      <div>
+        <h3 className="font-bold mb-3 flex items-center gap-2"><Gift size={18} /> سجل الهدايا والتالف</h3>
+        {stockLogs.length === 0 ? (
+          <Card className="p-6"><EmptyState text="لا توجد عمليات هدايا أو تالف مسجَّلة بعد" /></Card>
+        ) : (
+          <div className="space-y-2">
+            {stockLogs.map((l) => (
+              <Card key={l.id} className="p-3 flex items-center justify-between">
+                <div className="flex items-center gap-3">
+                  <div className={`w-9 h-9 rounded-full flex items-center justify-center shrink-0 ${l.type === "gift" ? "bg-[var(--surface-3)] text-[var(--accent)]" : "bg-[#FBEAEA] text-[#B23A3A]"}`}>
+                    {l.type === "gift" ? <Gift size={16} /> : <Ban size={16} />}
+                  </div>
+                  <div>
+                    <p className="text-sm font-semibold">{l.productName} <span className="text-[var(--muted)] font-normal">× {l.qty}</span></p>
+                    <p className="text-[11px] text-[var(--muted)]">{l.byUserName} · {dateLabel(l.date)} {timeLabel(l.date)}{l.note ? ` · ${l.note}` : ""}</p>
+                  </div>
+                </div>
+                {isAdmin && (
+                  <button onClick={() => onDeleteLog(l.id)} className="p-1.5 rounded-lg text-[#B23A3A] hover:bg-[#FBEAEA] shrink-0"><Trash2 size={15} /></button>
+                )}
+              </Card>
+            ))}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -1635,6 +1947,83 @@ function UsersAdmin({ users, onSave }) {
 }
 
 /* ---------------------------------- Settings ---------------------------------- */
+
+/* ---------------------------------- Announcements (Circulars) ---------------------------------- */
+
+function AnnouncementPopup({ announcement, onClose }) {
+  if (!announcement) return null;
+  return (
+    <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/60 p-4 announce-backdrop" dir="rtl">
+      <div className="bg-[var(--surface)] rounded-2xl w-full max-w-sm p-6 text-center announce-pop">
+        <div className="w-14 h-14 rounded-full bg-[var(--surface-3)] flex items-center justify-center mx-auto mb-4">
+          <Megaphone size={26} className="text-[var(--accent)]" />
+        </div>
+        <p className="text-[10px] font-semibold text-[var(--accent)] mb-1">تعميم جديد من {announcement.createdByName}</p>
+        <h3 className="text-lg font-extrabold mb-2">{announcement.title}</h3>
+        <p className="text-sm text-[var(--text)] whitespace-pre-line mb-1">{announcement.message}</p>
+        <p className="text-[10px] text-[var(--muted)] mb-5">{dateLabel(announcement.date)} · {timeLabel(announcement.date)}</p>
+        <Btn className="w-full" onClick={onClose}>
+          <Check size={16} /> تم الاطلاع
+        </Btn>
+      </div>
+    </div>
+  );
+}
+
+function AnnouncementsPage({ announcements, isAdmin, onCreate, onDelete }) {
+  const [title, setTitle] = useState("");
+  const [message, setMessage] = useState("");
+
+  const submit = () => {
+    if (!title.trim() || !message.trim()) return;
+    onCreate(title, message);
+    setTitle("");
+    setMessage("");
+  };
+
+  return (
+    <div className="space-y-5 max-w-xl">
+      <h2 className="text-xl font-bold flex items-center gap-2"><Megaphone size={20} /> التعميمات</h2>
+
+      {isAdmin && (
+        <Card className="p-4 space-y-3">
+          <h3 className="font-bold">إصدار تعميم جديد</h3>
+          <Field label="العنوان">
+            <input className={inputCls} value={title} onChange={(e) => setTitle(e.target.value)} placeholder="مثال: تنبيه بشأن العطلة الرسمية" />
+          </Field>
+          <Field label="نص التعميم">
+            <textarea className={inputCls + " min-h-[90px]"} value={message} onChange={(e) => setMessage(e.target.value)} placeholder="اكتب تفاصيل التعميم هنا..." />
+          </Field>
+          <Btn onClick={submit} className="w-full">
+            <Megaphone size={16} /> إرسال التعميم لجميع البائعين
+          </Btn>
+          <p className="text-[11px] text-[var(--muted)]">سيظهر التعميم فوراً كنافذة منبثقة لكل من يستخدم التطبيق حالياً، وكذلك عند دخول أي بائع لاحقاً.</p>
+        </Card>
+      )}
+
+      {announcements.length === 0 ? (
+        <Card className="p-8"><EmptyState text="لا توجد تعميمات بعد" /></Card>
+      ) : (
+        <div className="space-y-3">
+          {announcements.map((a) => (
+            <Card key={a.id} className="p-4">
+              <div className="flex justify-between items-start gap-2">
+                <div>
+                  <p className="font-bold">{a.title}</p>
+                  <p className="text-xs text-[var(--muted)]">{a.createdByName} · {dateLabel(a.date)} {timeLabel(a.date)}</p>
+                </div>
+                {isAdmin && (
+                  <button onClick={() => onDelete(a.id)} className="p-1.5 rounded-lg text-[#B23A3A] hover:bg-[#FBEAEA] shrink-0"><Trash2 size={16} /></button>
+                )}
+              </div>
+              <p className="text-sm mt-2 whitespace-pre-line">{a.message}</p>
+            </Card>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
 
 function SettingsPage({ settings, onSave }) {
   const [form, setForm] = useState(settings);
@@ -1831,8 +2220,8 @@ function EditSaleModal({ sale, products, onClose, onSave }) {
   const total = items.reduce((a, l) => a + l.total, 0);
 
   return (
-    <div className="fixed inset-0 z-[9998] flex items-center justify-center bg-black/50 p-4" dir="rtl">
-      <div className="bg-[var(--surface)] rounded-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto p-5">
+    <div className="fixed inset-0 z-[9998] flex items-center justify-center bg-black/50 p-4 announce-backdrop" dir="rtl">
+      <div className="bg-[var(--surface)] rounded-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto p-5 announce-pop">
         <div className="flex items-center justify-between mb-4">
           <h3 className="text-lg font-bold">تعديل فاتورة {sale.invoiceNo}</h3>
           <button onClick={onClose} className="p-1 text-[var(--muted)]"><X size={20} /></button>
