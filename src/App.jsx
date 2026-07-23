@@ -172,7 +172,7 @@ const inputCls = "w-full rounded-xl border border-[var(--border)] bg-[var(--inpu
 
 /* ---------------------------------- Login ---------------------------------- */
 
-function LoginScreen({ users, onLogin, onRecover }) {
+function LoginScreen({ users, onLogin, onRecover, onLegacyUpgrade }) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [showPw, setShowPw] = useState(false);
@@ -182,14 +182,28 @@ function LoginScreen({ users, onLogin, onRecover }) {
   const submit = async (e) => {
     e.preventDefault();
     const hashed = await hashPassword(password);
-    const u = users.find(
-      (x) => x.username.trim().toLowerCase() === username.trim().toLowerCase() && x.password === hashed
-    );
+    const uname = username.trim().toLowerCase();
+
+    // Normal path: password already stored as a hash.
+    let u = users.find((x) => x.username.trim().toLowerCase() === uname && x.password === hashed);
+
+    // Legacy path: this account still has its old plain-text password
+    // (from before password hashing was introduced). Accept it once, then
+    // silently upgrade it to a proper hash so it's secure from now on.
+    let legacyMatch = null;
+    if (!u) {
+      legacyMatch = users.find((x) => x.username.trim().toLowerCase() === uname && x.password === password);
+      if (legacyMatch) u = legacyMatch;
+    }
+
     if (!u) {
       setErr("اسم المستخدم أو كلمة المرور غير صحيحة");
       return;
     }
     setErr("");
+    if (legacyMatch) {
+      await onLegacyUpgrade(legacyMatch.id, hashed);
+    }
     onLogin(u);
   };
 
@@ -770,6 +784,10 @@ export default function App() {
               const next = users.map((u, i) => (i === idx ? { ...u, password: newPassword } : u));
               await persistUsers(next);
               return true;
+            }}
+            onLegacyUpgrade={async (userId, hashedPassword) => {
+              const next = users.map((u) => (u.id === userId ? { ...u, password: hashedPassword } : u));
+              await persistUsers(next);
             }}
           />
         )}
