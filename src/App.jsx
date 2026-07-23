@@ -3,7 +3,8 @@ import {
   Plus, Trash2, Printer, Download, Upload, LogOut, Package, Receipt,
   BarChart3, Settings as SettingsIcon, Users as UsersIcon, Search, X, Check,
   Menu, Save, Image as ImageIcon, ShoppingCart, Home, AlertTriangle, Eye, EyeOff,
-  Sun, Moon, Pencil, Wallet, Tag, MessageSquare, Megaphone, Gift, Ban
+  Sun, Moon, Pencil, Wallet, Tag, MessageSquare, Megaphone, Gift, Ban,
+  Wallet2, Calculator, Percent, Droplet, TrendingUp, TrendingDown, ShieldCheck, Bell
 } from "lucide-react";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
@@ -55,6 +56,16 @@ async function storeSet(key, value, shared = true) {
   } catch {
     return false;
   }
+}
+
+// Passwords are never stored in plain text: every password is hashed with
+// SHA-256 (via the browser's built-in Web Crypto API) before being written
+// to storage, and login compares hash-to-hash. A short random per-install
+// salt is mixed in so the same password doesn't always hash identically.
+async function hashPassword(plain) {
+  const enc = new TextEncoder().encode("atourna-salt-v1:" + plain);
+  const digest = await crypto.subtle.digest("SHA-256", enc);
+  return Array.from(new Uint8Array(digest)).map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
 const COLORS = ["#B8894A", "#5B2333", "#3F7D57", "#8A7B6C", "#C9A227", "#7A4B63"];
@@ -168,10 +179,11 @@ function LoginScreen({ users, onLogin, onRecover }) {
   const [err, setErr] = useState("");
   const [showRecover, setShowRecover] = useState(false);
 
-  const submit = (e) => {
+  const submit = async (e) => {
     e.preventDefault();
+    const hashed = await hashPassword(password);
     const u = users.find(
-      (x) => x.username.trim().toLowerCase() === username.trim().toLowerCase() && x.password === password
+      (x) => x.username.trim().toLowerCase() === username.trim().toLowerCase() && x.password === hashed
     );
     if (!u) {
       setErr("اسم المستخدم أو كلمة المرور غير صحيحة");
@@ -223,6 +235,9 @@ function LoginScreen({ users, onLogin, onRecover }) {
             نسيت اسم المستخدم أو كلمة المرور؟
           </button>
         </Card>
+        <p className="flex items-center justify-center gap-1.5 text-[11px] text-[var(--muted)] mt-4">
+          <ShieldCheck size={13} /> كلمات المرور مشفّرة بالكامل ولا تُخزَّن كنص صريح
+        </p>
       </div>
 
       {showRecover && (
@@ -259,8 +274,9 @@ function RecoverModal({ users, onRecover, onClose }) {
     setStep(2);
   };
 
-  const checkAnswer = () => {
-    if (answer.trim().toLowerCase() !== (foundUser.securityAnswer || "").trim().toLowerCase()) {
+  const checkAnswer = async () => {
+    const hashedAnswer = await hashPassword(answer.trim().toLowerCase());
+    if (hashedAnswer !== foundUser.securityAnswer) {
       setErr("الإجابة غير صحيحة");
       return;
     }
@@ -270,7 +286,8 @@ function RecoverModal({ users, onRecover, onClose }) {
 
   const resetPassword = async () => {
     if (!newPassword.trim()) return;
-    const ok = await onRecover(foundUser.username, newPassword);
+    const hashed = await hashPassword(newPassword);
+    const ok = await onRecover(foundUser.username, hashed);
     if (ok) {
       setStep(4);
     } else {
@@ -329,6 +346,29 @@ function RecoverModal({ users, onRecover, onClose }) {
 
 /* ---------------------------------- First-run Setup ---------------------------------- */
 
+/* ---------------------------------- Confirm Dialog ---------------------------------- */
+
+function ConfirmModal({ message, onConfirm, onCancel }) {
+  return (
+    <div className="fixed inset-0 z-[10001] flex items-center justify-center bg-black/55 p-4 announce-backdrop" dir="rtl">
+      <div className="bg-[var(--surface)] rounded-2xl w-full max-w-xs p-6 text-center announce-pop">
+        <div className="w-12 h-12 rounded-full bg-[#FBEAEA] flex items-center justify-center mx-auto mb-3">
+          <AlertTriangle size={22} className="text-[#B23A3A]" />
+        </div>
+        <p className="text-sm font-semibold mb-5">{message}</p>
+        <div className="flex gap-2">
+          <Btn variant="danger" className="flex-1" onClick={onConfirm}>
+            <Trash2 size={15} /> تأكيد الحذف
+          </Btn>
+          <Btn variant="outline" className="flex-1" onClick={onCancel}>
+            إلغاء
+          </Btn>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function SetupScreen({ onComplete }) {
   const [name, setName] = useState("");
   const [username, setUsername] = useState("");
@@ -337,7 +377,7 @@ function SetupScreen({ onComplete }) {
   const [securityAnswer, setSecurityAnswer] = useState("");
   const [err, setErr] = useState("");
 
-  const submit = (e) => {
+  const submit = async (e) => {
     e.preventDefault();
     if (!name.trim() || !username.trim() || !password.trim()) {
       setErr("يرجى تعبئة الاسم واسم المستخدم وكلمة المرور");
@@ -347,14 +387,16 @@ function SetupScreen({ onComplete }) {
       setErr("يرجى إضافة سؤال أمان وإجابته لاستخدامهما لاحقاً في حال نسيان كلمة المرور");
       return;
     }
+    const hashedPassword = await hashPassword(password);
+    const hashedAnswer = await hashPassword(securityAnswer.trim().toLowerCase());
     onComplete({
       id: uid(),
       name: name.trim(),
       username: username.trim(),
-      password,
+      password: hashedPassword,
       role: "admin",
       securityQuestion: securityQuestion.trim(),
-      securityAnswer: securityAnswer.trim(),
+      securityAnswer: hashedAnswer,
     });
   };
 
@@ -405,6 +447,8 @@ const NAV_ITEMS = [
   { key: "stats", label: "الإحصائيات", icon: BarChart3, roles: ["admin", "seller"] },
   { key: "inventory", label: "المخزون", icon: Package, roles: ["admin", "seller"] },
   { key: "announcements", label: "التعاميم", icon: Megaphone, roles: ["admin", "seller"] },
+  { key: "expenses", label: "المصروفات", icon: Wallet2, roles: ["admin"] },
+  { key: "accounting", label: "المحاسبة", icon: Calculator, roles: ["admin"] },
   { key: "users", label: "المستخدمون", icon: UsersIcon, roles: ["admin"] },
   { key: "settings", label: "الإعدادات", icon: SettingsIcon, roles: ["admin"] },
   { key: "backup", label: "النسخ الاحتياطي", icon: Save, roles: ["admin"] },
@@ -418,18 +462,25 @@ export default function App() {
   const [products, setProducts] = useState([]);
   const [sales, setSales] = useState([]);
   const [seq, setSeq] = useState({});
-  const [settings, setSettings] = useState({ companyName: "عطورنا للعطور والبخور", logo: "", phone: "", address: "", theme: "classic" });
+  const [settings, setSettings] = useState({ companyName: "عطورنا للعطور والبخور", logo: "", phone: "", address: "", theme: "classic", taxEnabled: false, taxRate: 5, taxLabel: "ضريبة القيمة المضافة" });
   const [currentUser, setCurrentUser] = useState(null);
   const [view, setView] = useState("dashboard");
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [notifOpen, setNotifOpen] = useState(false);
   const [printPayload, setPrintPayload] = useState(null); // {type:'invoice'|'record', data}
   const [editingSale, setEditingSale] = useState(null);
   const [labelPayload, setLabelPayload] = useState(null); // {product, count}
   const [announcements, setAnnouncements] = useState([]);
   const [announcementQueue, setAnnouncementQueue] = useState([]); // ids waiting to be shown as popups
-  const [stockLogs, setStockLogs] = useState([]); // gifted / damaged product adjustments
+  const [stockLogs, setStockLogs] = useState([]); // gifted / damaged / tester product adjustments
+  const [expenses, setExpenses] = useState([]);
   const [darkMode, setDarkMode] = useState(false);
   const [toast, setToast] = useState("");
+  const [confirmState, setConfirmState] = useState(null); // { message, onConfirm }
+
+  const askConfirm = useCallback((message, onConfirm) => {
+    setConfirmState({ message, onConfirm });
+  }, []);
 
   // Keeps the last-synced snapshot so the periodic refresh below can skip
   // re-rendering when nothing actually changed on the shared database.
@@ -440,11 +491,12 @@ export default function App() {
     const p = await storeGet("perfume_products", []);
     const s = await storeGet("perfume_sales", []);
     const sq = await storeGet("perfume_seq", {});
-    const st = await storeGet("perfume_settings", { companyName: "عطورنا للعطور والبخور", logo: "", phone: "", address: "", theme: "classic" });
+    const st = await storeGet("perfume_settings", { companyName: "عطورنا للعطور والبخور", logo: "", phone: "", address: "", theme: "classic", taxEnabled: false, taxRate: 5, taxLabel: "ضريبة القيمة المضافة" });
     const an = await storeGet("perfume_announcements", []);
     const sl = await storeGet("perfume_stock_logs", []);
+    const ex = await storeGet("perfume_expenses", []);
 
-    const snapshot = JSON.stringify({ u, p, s, sq, st, an, sl });
+    const snapshot = JSON.stringify({ u, p, s, sq, st, an, sl, ex });
     if (snapshot === lastSnapshot.current) return; // nothing new, avoid needless re-render
     lastSnapshot.current = snapshot;
 
@@ -455,6 +507,7 @@ export default function App() {
     setSettings(st);
     setAnnouncements(an);
     setStockLogs(sl);
+    setExpenses(ex);
     if (isInitial) setLoading(false);
   }, []);
 
@@ -561,7 +614,8 @@ export default function App() {
     await persistAnnouncements(announcements.filter((a) => a.id !== id));
   };
 
-  // Records a gifted or damaged unit against a product and deducts it from stock immediately.
+  // Records a gifted, damaged, or opened-for-testing unit against a product
+  // and deducts it from stock immediately.
   const logStockAdjustment = async (product, type, qty, note) => {
     const q = Math.min(qty, product.stock);
     if (q <= 0) return;
@@ -570,7 +624,7 @@ export default function App() {
       id: uid(),
       productId: product.id,
       productName: product.name,
-      type, // 'gift' | 'damage'
+      type, // 'gift' | 'damage' | 'tester'
       qty: q,
       note: note?.trim() || "",
       date: todayISO(),
@@ -578,11 +632,31 @@ export default function App() {
     };
     await persistProducts(updatedProducts);
     await persistStockLogs([log, ...stockLogs]);
-    showToast(type === "gift" ? "تم تسجيل الهدية وخصمها من المخزون" : "تم تسجيل التالف وخصمه من المخزون");
+    const labels = { gift: "تم تسجيل الهدية وخصمها من المخزون", damage: "تم تسجيل التالف وخصمه من المخزون", tester: "تم تسجيل فتح المنتج للتجربة وخصمه من المخزون" };
+    showToast(labels[type] || "تم تحديث المخزون");
   };
 
   const deleteStockLog = async (id) => {
     await persistStockLogs(stockLogs.filter((l) => l.id !== id));
+  };
+
+  const persistExpenses = async (next) => { setExpenses(next); await storeSet("perfume_expenses", next); };
+
+  const addExpense = async (expense) => {
+    const record = {
+      id: uid(),
+      category: expense.category,
+      description: expense.description?.trim() || "",
+      amount: Number(expense.amount) || 0,
+      date: expense.date || todayISO(),
+      byUserName: currentUser.name,
+    };
+    await persistExpenses([record, ...expenses]);
+    showToast("تم تسجيل المصروف");
+  };
+
+  const deleteExpense = async (id) => {
+    await persistExpenses(expenses.filter((e) => e.id !== id));
   };
 
   const updateSale = async (id, updates) => {
@@ -612,10 +686,20 @@ export default function App() {
   };
 
   // Full invoice edit (admin only): replaces items/collected and reconciles stock deltas.
-  const editSaleWithStock = async (id, newItems, newCollected) => {
+  const editSaleWithStock = async (id, newItems, newCollected, newDiscountType, newDiscountValue) => {
     const oldSale = sales.find((s) => s.id === id);
     if (!oldSale) return;
-    const total = newItems.reduce((a, l) => a + l.total, 0);
+
+    const subtotal = newItems.reduce((a, l) => a + l.total, 0);
+    const discountType = newDiscountType ?? oldSale.discountType ?? "amount";
+    const discountValue = newDiscountValue ?? oldSale.discountValue ?? 0;
+    const discountAmount = Math.min(subtotal, discountType === "percent" ? subtotal * (discountValue / 100) : discountValue);
+    const afterDiscount = Math.max(0, subtotal - discountAmount);
+    const taxEnabled = !!oldSale.taxEnabled;
+    const taxRate = oldSale.taxRate || 0;
+    const taxAmount = taxEnabled ? afterDiscount * (taxRate / 100) : 0;
+    const total = afterDiscount + taxAmount;
+
     const collected = Math.min(newCollected, total);
     const remaining = Math.max(0, total - collected);
 
@@ -634,7 +718,7 @@ export default function App() {
     });
 
     await persistProducts(updatedProducts);
-    await updateSale(id, { items: newItems, total, collected, remaining });
+    await updateSale(id, { items: newItems, subtotal, discountType, discountValue, discountAmount, taxAmount, total, collected, remaining });
   };
 
   const isAdmin = currentUser?.role === "admin";
@@ -707,8 +791,8 @@ export default function App() {
           sale={editingSale}
           products={products}
           onClose={() => setEditingSale(null)}
-          onSave={async (newItems, newCollected) => {
-            await editSaleWithStock(editingSale.id, newItems, newCollected);
+          onSave={async (newItems, newCollected, newDiscountType, newDiscountValue) => {
+            await editSaleWithStock(editingSale.id, newItems, newCollected, newDiscountType, newDiscountValue);
             setEditingSale(null);
             showToast("تم تعديل الفاتورة بنجاح");
           }}
@@ -731,6 +815,17 @@ export default function App() {
             markAnnouncementSeen(currentUser.id, announcementQueue[0]);
             setAnnouncementQueue((q) => q.slice(1));
           }}
+        />
+      )}
+
+      {confirmState && (
+        <ConfirmModal
+          message={confirmState.message}
+          onConfirm={() => {
+            confirmState.onConfirm();
+            setConfirmState(null);
+          }}
+          onCancel={() => setConfirmState(null)}
         />
       )}
 
@@ -758,6 +853,17 @@ export default function App() {
             >
               {darkMode ? <Sun size={20} /> : <Moon size={20} />}
             </button>
+            <NotificationsBell
+              open={notifOpen}
+              setOpen={setNotifOpen}
+              announcements={announcements}
+              currentUser={currentUser}
+              products={products}
+              sales={sales}
+              isAdmin={isAdmin}
+              setView={setView}
+              onOpenAnnouncement={(id) => markAnnouncementSeen(currentUser.id, id)}
+            />
             <button
               onClick={() => { window.localStorage.removeItem("atourna_session_username"); setCurrentUser(null); }}
               className="p-2 rounded-lg text-[#B23A3A] hover:bg-[#FBEAEA]"
@@ -816,6 +922,7 @@ export default function App() {
               currentUser={currentUser}
               sales={sales}
               seq={seq}
+              settings={settings}
               onCreate={async (sale, updatedProducts, newSeq) => {
                 await persistProducts(updatedProducts);
                 await persistSales([sale, ...sales]);
@@ -848,6 +955,7 @@ export default function App() {
               onEditSale={(sale) => setEditingSale(sale)}
               onAddComment={addSaleComment}
               onDeleteComment={deleteSaleComment}
+              onConfirm={askConfirm}
             />
           )}
           {view === "stats" && <Stats sales={sales} users={users} products={products} currentUser={currentUser} isAdmin={isAdmin} />}
@@ -860,6 +968,7 @@ export default function App() {
               stockLogs={stockLogs}
               onLogAdjustment={logStockAdjustment}
               onDeleteLog={deleteStockLog}
+              onConfirm={askConfirm}
             />
           )}
           {view === "announcements" && (
@@ -868,17 +977,34 @@ export default function App() {
               isAdmin={isAdmin}
               onCreate={createAnnouncement}
               onDelete={deleteAnnouncement}
+              onConfirm={askConfirm}
+            />
+          )}
+          {view === "expenses" && isAdmin && (
+            <ExpensesPage
+              expenses={expenses}
+              onAdd={addExpense}
+              onDelete={deleteExpense}
+              onConfirm={askConfirm}
+            />
+          )}
+          {view === "accounting" && isAdmin && (
+            <AccountingPage
+              sales={sales}
+              products={products}
+              expenses={expenses}
+              stockLogs={stockLogs}
             />
           )}
           {view === "users" && isAdmin && (
-            <UsersAdmin users={users} onSave={async (next) => { await persistUsers(next); showToast("تم حفظ المستخدمين"); }} />
+            <UsersAdmin users={users} onSave={async (next) => { await persistUsers(next); showToast("تم حفظ المستخدمين"); }} onConfirm={askConfirm} />
           )}
           {view === "settings" && isAdmin && (
             <SettingsPage settings={settings} onSave={async (next) => { await persistSettings(next); showToast("تم حفظ الإعدادات"); }} />
           )}
           {view === "backup" && isAdmin && (
             <BackupPage
-              data={{ users, products, sales, seq, settings, announcements, stockLogs }}
+              data={{ users, products, sales, seq, settings, announcements, stockLogs, expenses }}
               onRestore={async (next, mode) => {
                 if (mode === "replace") {
                   await persistUsers(next.users || users);
@@ -888,6 +1014,7 @@ export default function App() {
                   await persistSettings(next.settings || settings);
                   await persistAnnouncements(next.announcements || announcements);
                   await persistStockLogs(next.stockLogs || stockLogs);
+                  await persistExpenses(next.expenses || expenses);
                 } else {
                   const mergeById = (a, b) => {
                     const map = new Map(a.map((x) => [x.id, x]));
@@ -901,6 +1028,7 @@ export default function App() {
                   await persistSettings({ ...settings, ...(next.settings || {}) });
                   await persistAnnouncements(mergeById(announcements, next.announcements));
                   await persistStockLogs(mergeById(stockLogs, next.stockLogs));
+                  await persistExpenses(mergeById(expenses, next.expenses));
                 }
                 showToast("تمت استعادة البيانات بنجاح");
               }}
@@ -956,6 +1084,109 @@ function NavBtn({ item, active, onClick }) {
     </button>
   );
 }
+
+/* ---------------------------------- Notifications Bell ---------------------------------- */
+
+function NotificationsBell({ open, setOpen, announcements, currentUser, products, sales, isAdmin, setView, onOpenAnnouncement }) {
+  const panelRef = useRef(null);
+
+  useEffect(() => {
+    const onClickOutside = (e) => {
+      if (panelRef.current && !panelRef.current.contains(e.target)) setOpen(false);
+    };
+    document.addEventListener("mousedown", onClickOutside);
+    return () => document.removeEventListener("mousedown", onClickOutside);
+  }, [setOpen]);
+
+  const seen = new Set(getSeenAnnouncementIds(currentUser.id));
+  const unseenAnnouncements = announcements
+    .filter((a) => !seen.has(a.id) && a.createdById !== currentUser.id)
+    .sort((a, b) => new Date(b.date) - new Date(a.date));
+
+  const lowStock = products.filter((p) => p.stock <= (p.minStock ?? 5));
+  const totalRemaining = sales.reduce((a, s) => a + s.remaining, 0);
+  const remainingCount = sales.filter((s) => s.remaining > 0).length;
+
+  const badgeCount = unseenAnnouncements.length + (lowStock.length > 0 ? 1 : 0) + (isAdmin && totalRemaining > 0 ? 1 : 0);
+  const hasNotifications = badgeCount > 0;
+
+  return (
+    <div className="relative" ref={panelRef}>
+      <button
+        onClick={() => setOpen((o) => !o)}
+        className="relative p-2 rounded-lg text-[var(--accent-dark)] hover:bg-[var(--surface-3)]"
+        title="الإشعارات"
+      >
+        <Bell size={20} />
+        {hasNotifications && (
+          <span className="absolute -top-0.5 -left-0.5 min-w-[16px] h-4 px-1 rounded-full bg-[#B23A3A] text-white text-[9px] font-bold flex items-center justify-center fade-in">
+            {badgeCount}
+          </span>
+        )}
+      </button>
+
+      {open && (
+        <div className="absolute left-0 top-12 w-80 max-w-[90vw] bg-[var(--surface)] border border-[var(--border)] rounded-2xl shadow-xl z-50 announce-pop overflow-hidden" dir="rtl">
+          <div className="px-4 py-3 border-b border-[var(--border)] flex items-center gap-2">
+            <Bell size={16} className="text-[var(--accent)]" />
+            <p className="font-bold text-sm">الإشعارات</p>
+          </div>
+
+          <div className="max-h-80 overflow-y-auto divide-y divide-[var(--border)]">
+            {!hasNotifications ? (
+              <div className="p-6 text-center">
+                <p className="text-xs text-[var(--muted)]">لا توجد إشعارات جديدة — كل شيء تمام 👍</p>
+              </div>
+            ) : (
+              <>
+                {unseenAnnouncements.map((a) => (
+                  <button
+                    key={a.id}
+                    onClick={() => { onOpenAnnouncement(a.id); setView("announcements"); setOpen(false); }}
+                    className="w-full text-right px-4 py-3 hover:bg-[var(--surface-2)] flex items-start gap-2.5"
+                  >
+                    <Megaphone size={15} className="text-[var(--accent)] shrink-0 mt-0.5" />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-semibold truncate">{a.title}</p>
+                      <p className="text-[10px] text-[var(--muted)]">تعميم جديد من {a.createdByName} · {dateLabel(a.date)}</p>
+                    </div>
+                  </button>
+                ))}
+
+                {lowStock.length > 0 && (
+                  <button
+                    onClick={() => { setView("inventory"); setOpen(false); }}
+                    className="w-full text-right px-4 py-3 hover:bg-[var(--surface-2)] flex items-start gap-2.5"
+                  >
+                    <AlertTriangle size={15} className="text-[#B23A3A] shrink-0 mt-0.5" />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-semibold">{lowStock.length} منتج بحاجة لإعادة تخزين</p>
+                      <p className="text-[10px] text-[var(--muted)] truncate">{lowStock.slice(0, 3).map((p) => p.name).join("، ")}{lowStock.length > 3 ? " ..." : ""}</p>
+                    </div>
+                  </button>
+                )}
+
+                {isAdmin && totalRemaining > 0 && (
+                  <button
+                    onClick={() => { setView("records"); setOpen(false); }}
+                    className="w-full text-right px-4 py-3 hover:bg-[var(--surface-2)] flex items-start gap-2.5"
+                  >
+                    <Wallet size={15} className="text-[#B23A3A] shrink-0 mt-0.5" />
+                    <div className="flex-1 min-w-0">
+                      <p className="text-xs font-semibold">{fmt(totalRemaining)} د.ك مستحقة على العملاء</p>
+                      <p className="text-[10px] text-[var(--muted)]">عبر {remainingCount} فاتورة غير مسدَّدة بالكامل</p>
+                    </div>
+                  </button>
+                )}
+              </>
+            )}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 
 function GlobalStyle() {
   return (
@@ -1061,7 +1292,7 @@ function Dashboard({ sales, products, currentUser, setView }) {
   return (
     <div className="space-y-5">
       <div>
-        <h2 className="text-xl font-bold text-[var(--text)]">مرحباً، {currentUser.name} 🌸</h2>
+        <h2 className="text-xl font-bold text-[var(--text)]">مرحباً، {currentUser.name} 😊</h2>
         <p className="text-sm text-[var(--muted)]">نظرة عامة على أداء المتجر</p>
       </div>
 
@@ -1083,7 +1314,7 @@ function Dashboard({ sales, products, currentUser, setView }) {
                 <div key={s.id} className="flex items-center justify-between text-sm border-b border-[#F5EEDF] pb-2 last:border-0">
                   <div>
                     <p className="font-semibold">{s.invoiceNo}</p>
-                    <p className="text-xs text-[#8A7B6C]">{s.sellerName} · {dateLabel(s.date)}</p>
+                    <p className="text-xs text-[var(--muted)]">{s.sellerName} · {dateLabel(s.date)}</p>
                   </div>
                   <p className="font-bold text-[var(--accent)]">{fmt(s.total)} د.ك</p>
                 </div>
@@ -1126,7 +1357,7 @@ function StatCard({ label, value, color }) {
 
 function EmptyState({ text }) {
   return (
-    <div className="text-center py-6 text-sm text-[#B8AFA0]">
+    <div className="text-center py-6 text-sm text-[var(--muted)]">
       <p>{text}</p>
     </div>
   );
@@ -1134,7 +1365,7 @@ function EmptyState({ text }) {
 
 /* ---------------------------------- New Sale ---------------------------------- */
 
-function NewSale({ products, users, currentUser, sales, seq, onCreate }) {
+function NewSale({ products, users, currentUser, sales, seq, settings, onCreate }) {
   const isAdmin = currentUser.role === "admin";
   const sellers = users.filter((u) => u.role === "seller" || u.role === "admin");
   const [sellerId, setSellerId] = useState(currentUser.id);
@@ -1143,6 +1374,8 @@ function NewSale({ products, users, currentUser, sales, seq, onCreate }) {
   const [qty, setQty] = useState(1);
   const [unitPrice, setUnitPrice] = useState("");
   const [collected, setCollected] = useState("");
+  const [discountType, setDiscountType] = useState("amount"); // 'amount' | 'percent'
+  const [discountValue, setDiscountValue] = useState("");
 
   const seller = users.find((u) => u.id === sellerId) || currentUser;
   const selectedProduct = products.find((p) => p.id === productId);
@@ -1166,7 +1399,18 @@ function NewSale({ products, users, currentUser, sales, seq, onCreate }) {
 
   const removeLine = (lineId) => setCart((c) => c.filter((l) => l.lineId !== lineId));
 
-  const total = cart.reduce((a, l) => a + l.total, 0);
+  const subtotal = cart.reduce((a, l) => a + l.total, 0);
+  const discountNum = Number(discountValue) || 0;
+  const discountAmount = Math.min(
+    subtotal,
+    discountType === "percent" ? subtotal * (discountNum / 100) : discountNum
+  );
+  const afterDiscount = Math.max(0, subtotal - discountAmount);
+  const taxEnabled = !!settings.taxEnabled;
+  const taxRate = Number(settings.taxRate) || 0;
+  const taxAmount = taxEnabled ? afterDiscount * (taxRate / 100) : 0;
+  const total = afterDiscount + taxAmount;
+
   const collectedNum = collected === "" ? total : Number(collected);
   const remaining = Math.max(0, total - collectedNum);
 
@@ -1186,6 +1430,14 @@ function NewSale({ products, users, currentUser, sales, seq, onCreate }) {
       sellerName: seller.name,
       date: todayISO(),
       items: cart,
+      subtotal,
+      discountType,
+      discountValue: discountNum,
+      discountAmount,
+      taxEnabled,
+      taxRate,
+      taxLabel: settings.taxLabel || "الضريبة",
+      taxAmount,
       total,
       collected: collectedNum,
       remaining,
@@ -1193,6 +1445,7 @@ function NewSale({ products, users, currentUser, sales, seq, onCreate }) {
     await onCreate(sale, updatedProducts, newSeq);
     setCart([]);
     setCollected("");
+    setDiscountValue("");
   };
 
   return (
@@ -1240,10 +1493,10 @@ function NewSale({ products, users, currentUser, sales, seq, onCreate }) {
         ) : (
           <div className="space-y-2">
             {cart.map((l) => (
-              <div key={l.lineId} className="flex items-center justify-between text-sm bg-[#FBF9F5] rounded-xl px-3 py-2">
+              <div key={l.lineId} className="flex items-center justify-between text-sm bg-[var(--surface-2)] rounded-xl px-3 py-2">
                 <div>
                   <p className="font-semibold">{l.name}</p>
-                  <p className="text-xs text-[#8A7B6C]">{l.qty} × {fmt(l.price)} د.ك</p>
+                  <p className="text-xs text-[var(--muted)]">{l.qty} × {fmt(l.price)} د.ك</p>
                 </div>
                 <div className="flex items-center gap-3">
                   <p className="font-bold text-[var(--accent)]">{fmt(l.total)} د.ك</p>
@@ -1258,14 +1511,63 @@ function NewSale({ products, users, currentUser, sales, seq, onCreate }) {
       {cart.length > 0 && (
         <Card className="p-4 space-y-3">
           <div className="flex justify-between text-sm">
-            <span className="text-[#8A7B6C]">الإجمالي</span>
+            <span className="text-[var(--muted)]">المجموع الفرعي</span>
+            <span className="font-semibold">{fmt(subtotal)} د.ك</span>
+          </div>
+
+          <div className="pt-2 border-t border-[var(--border)]">
+            <span className="block text-xs font-semibold text-[var(--muted)] mb-2 flex items-center gap-1.5"><Percent size={13} /> الخصم (اختياري)</span>
+            <div className="flex gap-2">
+              <div className="flex rounded-xl overflow-hidden border border-[var(--border)]">
+                <button
+                  type="button"
+                  onClick={() => setDiscountType("amount")}
+                  className={`px-3 py-2 text-xs font-semibold ${discountType === "amount" ? "bg-[var(--accent)] text-white" : "bg-[var(--surface-2)] text-[var(--muted)]"}`}
+                >
+                  د.ك
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setDiscountType("percent")}
+                  className={`px-3 py-2 text-xs font-semibold ${discountType === "percent" ? "bg-[var(--accent)] text-white" : "bg-[var(--surface-2)] text-[var(--muted)]"}`}
+                >
+                  %
+                </button>
+              </div>
+              <input
+                type="number"
+                min="0"
+                step="0.001"
+                className={inputCls + " flex-1"}
+                placeholder={discountType === "percent" ? "مثال: 10" : "مثال: 2.000"}
+                value={discountValue}
+                onChange={(e) => setDiscountValue(e.target.value)}
+              />
+            </div>
+            {discountAmount > 0 && (
+              <div className="flex justify-between text-sm mt-2">
+                <span className="text-[var(--muted)]">قيمة الخصم</span>
+                <span className="font-semibold text-[#B23A3A]">− {fmt(discountAmount)} د.ك</span>
+              </div>
+            )}
+          </div>
+
+          {taxEnabled && (
+            <div className="flex justify-between text-sm">
+              <span className="text-[var(--muted)]">{settings.taxLabel || "الضريبة"} ({taxRate}%)</span>
+              <span className="font-semibold">+ {fmt(taxAmount)} د.ك</span>
+            </div>
+          )}
+
+          <div className="flex justify-between text-sm pt-2 border-t border-[var(--border)]">
+            <span className="text-[var(--muted)]">الإجمالي النهائي</span>
             <span className="font-extrabold text-lg">{fmt(total)} د.ك</span>
           </div>
           <Field label="المبلغ المحصل (د.ك)">
             <input type="number" min="0" step="0.001" className={inputCls} value={collected} placeholder={fmt(total)} onChange={(e) => setCollected(e.target.value)} />
           </Field>
           <div className="flex justify-between text-sm">
-            <span className="text-[#8A7B6C]">المبلغ المتبقي</span>
+            <span className="text-[var(--muted)]">المبلغ المتبقي</span>
             <span className={`font-bold ${remaining > 0 ? "text-[#B23A3A]" : "text-[#3F7D57]"}`}>{fmt(remaining)} د.ك</span>
           </div>
           <Btn onClick={submit} className="w-full">
@@ -1279,7 +1581,7 @@ function NewSale({ products, users, currentUser, sales, seq, onCreate }) {
 
 /* ---------------------------------- Sales Records ---------------------------------- */
 
-function SalesRecords({ sales, users, currentUser, isAdmin, onDelete, onPrintInvoice, onPrintRecord, onCollectPayment, onEditSale, onAddComment, onDeleteComment }) {
+function SalesRecords({ sales, users, currentUser, isAdmin, onDelete, onPrintInvoice, onPrintRecord, onCollectPayment, onEditSale, onAddComment, onDeleteComment, onConfirm }) {
   const [sellerFilter, setSellerFilter] = useState("all");
   const [search, setSearch] = useState("");
   const [payingId, setPayingId] = useState(null);
@@ -1368,7 +1670,7 @@ function SalesRecords({ sales, users, currentUser, isAdmin, onDelete, onPrintInv
                   {isAdmin && (
                     <>
                       <button onClick={() => onEditSale(s)} className="p-2.5 rounded-xl bg-[var(--surface-3)] text-[var(--accent-dark)]"><Pencil size={16} /></button>
-                      <button onClick={() => onDelete(s.id)} className="p-2.5 rounded-xl bg-[#FBEAEA] text-[#B23A3A]"><Trash2 size={16} /></button>
+                      <button onClick={() => onConfirm(`هل تريد حذف الفاتورة ${s.invoiceNo}؟ لا يمكن التراجع عن هذا الإجراء.`, () => onDelete(s.id))} className="p-2.5 rounded-xl bg-[#FBEAEA] text-[#B23A3A]"><Trash2 size={16} /></button>
                     </>
                   )}
                 </div>
@@ -1384,7 +1686,7 @@ function SalesRecords({ sales, users, currentUser, isAdmin, onDelete, onPrintInv
                     sale={s}
                     isAdmin={isAdmin}
                     onAddComment={(text) => onAddComment(s.id, text)}
-                    onDeleteComment={(commentId) => onDeleteComment(s.id, commentId)}
+                    onDeleteComment={(commentId) => onConfirm("هل تريد حذف هذه الملاحظة؟", () => onDeleteComment(s.id, commentId))}
                   />
                 )}
               </Card>
@@ -1432,7 +1734,7 @@ function SalesRecords({ sales, users, currentUser, isAdmin, onDelete, onPrintInv
                           {isAdmin && (
                             <>
                               <button onClick={() => onEditSale(s)} className="p-1.5 rounded-lg text-[var(--accent-dark)] hover:bg-[var(--surface-3)]" title="تعديل"><Pencil size={16} /></button>
-                              <button onClick={() => onDelete(s.id)} className="p-1.5 rounded-lg text-[#B23A3A] hover:bg-[#FBEAEA]" title="حذف"><Trash2 size={16} /></button>
+                              <button onClick={() => onConfirm(`هل تريد حذف الفاتورة ${s.invoiceNo}؟ لا يمكن التراجع عن هذا الإجراء.`, () => onDelete(s.id))} className="p-1.5 rounded-lg text-[#B23A3A] hover:bg-[#FBEAEA]" title="حذف"><Trash2 size={16} /></button>
                             </>
                           )}
                         </div>
@@ -1456,7 +1758,7 @@ function SalesRecords({ sales, users, currentUser, isAdmin, onDelete, onPrintInv
                             sale={s}
                             isAdmin={isAdmin}
                             onAddComment={(text) => onAddComment(s.id, text)}
-                            onDeleteComment={(commentId) => onDeleteComment(s.id, commentId)}
+                            onDeleteComment={(commentId) => onConfirm("هل تريد حذف هذه الملاحظة؟", () => onDeleteComment(s.id, commentId))}
                           />
                         </td>
                       </tr>
@@ -1667,7 +1969,7 @@ function Stats({ sales, users, products, currentUser, isAdmin }) {
 
 /* ---------------------------------- Inventory ---------------------------------- */
 
-function Inventory({ products, isAdmin, onSave, onPrintLabels, stockLogs, onLogAdjustment, onDeleteLog }) {
+function Inventory({ products, isAdmin, onSave, onPrintLabels, stockLogs, onLogAdjustment, onDeleteLog, onConfirm }) {
   const [form, setForm] = useState({ name: "", price: "", cost: "", stock: "", minStock: "5" });
   const [editingId, setEditingId] = useState(null);
   const [labelQty, setLabelQty] = useState({});
@@ -1770,6 +2072,12 @@ function Inventory({ products, isAdmin, onSave, onPrintLabels, stockLogs, onLogA
                       <Gift size={13} /> هدية
                     </button>
                     <button
+                      onClick={() => setAdjustType("tester")}
+                      className={`flex-1 py-1.5 rounded-lg text-xs font-semibold flex items-center justify-center gap-1 transition ${adjustType === "tester" ? "bg-[#3B6EA8] text-white" : "bg-[var(--surface)] text-[var(--muted)]"}`}
+                    >
+                      <Droplet size={13} /> تجربة
+                    </button>
+                    <button
                       onClick={() => setAdjustType("damage")}
                       className={`flex-1 py-1.5 rounded-lg text-xs font-semibold flex items-center justify-center gap-1 transition ${adjustType === "damage" ? "bg-[#B23A3A] text-white" : "bg-[var(--surface)] text-[var(--muted)]"}`}
                     >
@@ -1804,7 +2112,7 @@ function Inventory({ products, isAdmin, onSave, onPrintLabels, stockLogs, onLogA
               {isAdmin && (
                 <div className="flex gap-2 mt-2">
                   <button onClick={() => startEdit(p)} className="text-xs font-semibold text-[var(--accent-dark)] bg-[var(--surface-3)] rounded-lg px-3 py-1.5">تعديل</button>
-                  <button onClick={() => onSave(products.filter((x) => x.id !== p.id))} className="text-xs font-semibold text-[#B23A3A] bg-[#FBEAEA] rounded-lg px-3 py-1.5">حذف</button>
+                  <button onClick={() => onConfirm(`هل تريد حذف المنتج "${p.name}"؟ لا يمكن التراجع عن هذا الإجراء.`, () => onSave(products.filter((x) => x.id !== p.id)))} className="text-xs font-semibold text-[#B23A3A] bg-[#FBEAEA] rounded-lg px-3 py-1.5">حذف</button>
                 </div>
               )}
             </Card>
@@ -1821,8 +2129,8 @@ function Inventory({ products, isAdmin, onSave, onPrintLabels, stockLogs, onLogA
             {stockLogs.map((l) => (
               <Card key={l.id} className="p-3 flex items-center justify-between">
                 <div className="flex items-center gap-3">
-                  <div className={`w-9 h-9 rounded-full flex items-center justify-center shrink-0 ${l.type === "gift" ? "bg-[var(--surface-3)] text-[var(--accent)]" : "bg-[#FBEAEA] text-[#B23A3A]"}`}>
-                    {l.type === "gift" ? <Gift size={16} /> : <Ban size={16} />}
+                  <div className={`w-9 h-9 rounded-full flex items-center justify-center shrink-0 ${l.type === "gift" ? "bg-[var(--surface-3)] text-[var(--accent)]" : l.type === "tester" ? "bg-[#EAF1F8] text-[#3B6EA8]" : "bg-[#FBEAEA] text-[#B23A3A]"}`}>
+                    {l.type === "gift" ? <Gift size={16} /> : l.type === "tester" ? <Droplet size={16} /> : <Ban size={16} />}
                   </div>
                   <div>
                     <p className="text-sm font-semibold">{l.productName} <span className="text-[var(--muted)] font-normal">× {l.qty}</span></p>
@@ -1830,7 +2138,7 @@ function Inventory({ products, isAdmin, onSave, onPrintLabels, stockLogs, onLogA
                   </div>
                 </div>
                 {isAdmin && (
-                  <button onClick={() => onDeleteLog(l.id)} className="p-1.5 rounded-lg text-[#B23A3A] hover:bg-[#FBEAEA] shrink-0"><Trash2 size={15} /></button>
+                  <button onClick={() => onConfirm("هل تريد حذف هذا السجل؟", () => onDeleteLog(l.id))} className="p-1.5 rounded-lg text-[#B23A3A] hover:bg-[#FBEAEA] shrink-0"><Trash2 size={15} /></button>
                 )}
               </Card>
             ))}
@@ -1843,15 +2151,16 @@ function Inventory({ products, isAdmin, onSave, onPrintLabels, stockLogs, onLogA
 
 /* ---------------------------------- Users Admin ---------------------------------- */
 
-function UsersAdmin({ users, onSave }) {
+function UsersAdmin({ users, onSave, onConfirm }) {
   const [form, setForm] = useState({ username: "", password: "", name: "", role: "seller" });
   const [editingId, setEditingId] = useState(null);
   const [editForm, setEditForm] = useState({ username: "", password: "", name: "", role: "seller", securityQuestion: "", securityAnswer: "" });
 
-  const submit = () => {
+  const submit = async () => {
     if (!form.username || !form.password || !form.name) return;
     if (users.some((u) => u.username.toLowerCase() === form.username.toLowerCase())) return;
-    onSave([...users, { id: uid(), ...form }]);
+    const hashed = await hashPassword(form.password);
+    onSave([...users, { id: uid(), ...form, password: hashed }]);
     setForm({ username: "", password: "", name: "", role: "seller" });
   };
 
@@ -1859,18 +2168,29 @@ function UsersAdmin({ users, onSave }) {
     setEditingId(u.id);
     setEditForm({
       username: u.username,
-      password: u.password,
+      password: "", // blank = keep the current (hashed) password unchanged
       name: u.name,
       role: u.role,
       securityQuestion: u.securityQuestion || "",
-      securityAnswer: u.securityAnswer || "",
+      securityAnswer: "", // blank = keep the current (hashed) answer unchanged
     });
   };
 
-  const saveEdit = (id) => {
-    if (!editForm.username || !editForm.password || !editForm.name) return;
+  const saveEdit = async (id) => {
+    if (!editForm.username || !editForm.name) return;
     if (users.some((u) => u.id !== id && u.username.toLowerCase() === editForm.username.toLowerCase())) return;
-    onSave(users.map((u) => (u.id === id ? { ...u, ...editForm } : u)));
+    const original = users.find((u) => u.id === id);
+    const updates = { ...editForm };
+    updates.password = editForm.password.trim() ? await hashPassword(editForm.password.trim()) : original.password;
+    if (original.isPrimaryAdmin) {
+      updates.securityAnswer = editForm.securityAnswer.trim()
+        ? await hashPassword(editForm.securityAnswer.trim().toLowerCase())
+        : original.securityAnswer;
+    } else {
+      delete updates.securityAnswer;
+      delete updates.securityQuestion;
+    }
+    onSave(users.map((u) => (u.id === id ? { ...u, ...updates } : u)));
     setEditingId(null);
   };
 
@@ -1908,13 +2228,15 @@ function UsersAdmin({ users, onSave }) {
                     </select>
                   </Field>
                   <Field label="اسم المستخدم"><input className={inputCls} value={editForm.username} onChange={(e) => setEditForm({ ...editForm, username: e.target.value })} /></Field>
-                  <Field label="كلمة المرور"><input className={inputCls} value={editForm.password} onChange={(e) => setEditForm({ ...editForm, password: e.target.value })} /></Field>
+                  <Field label="كلمة المرور الجديدة">
+                    <input className={inputCls} value={editForm.password} onChange={(e) => setEditForm({ ...editForm, password: e.target.value })} placeholder="اتركه فارغاً للإبقاء عليها" />
+                  </Field>
                 </div>
                 {u.isPrimaryAdmin && (
                   <div className="pt-2 border-t border-[var(--border)] space-y-3">
                     <p className="text-xs font-semibold text-[var(--muted)]">سؤال استعادة الحساب (لهذا الحساب فقط)</p>
                     <Field label="السؤال"><input className={inputCls} value={editForm.securityQuestion} onChange={(e) => setEditForm({ ...editForm, securityQuestion: e.target.value })} /></Field>
-                    <Field label="الإجابة"><input className={inputCls} value={editForm.securityAnswer} onChange={(e) => setEditForm({ ...editForm, securityAnswer: e.target.value })} /></Field>
+                    <Field label="إجابة جديدة"><input className={inputCls} value={editForm.securityAnswer} onChange={(e) => setEditForm({ ...editForm, securityAnswer: e.target.value })} placeholder="اتركها فارغة للإبقاء عليها" /></Field>
                   </div>
                 )}
                 <div className="flex gap-2">
@@ -1934,7 +2256,12 @@ function UsersAdmin({ users, onSave }) {
                 <div className="flex items-center gap-2">
                   <button onClick={() => startEdit(u)} className="p-2 rounded-lg text-[var(--accent-dark)] hover:bg-[var(--surface-3)]"><Pencil size={16} /></button>
                   {!u.isPrimaryAdmin && (
-                    <button onClick={() => onSave(users.filter((x) => x.id !== u.id))} className="p-2 rounded-lg text-[#B23A3A] hover:bg-[#FBEAEA]"><Trash2 size={16} /></button>
+                    <button
+                      onClick={() => onConfirm(`هل تريد حذف المستخدم "${u.name}"؟ لا يمكن التراجع عن هذا الإجراء.`, () => onSave(users.filter((x) => x.id !== u.id)))}
+                      className="p-2 rounded-lg text-[#B23A3A] hover:bg-[#FBEAEA]"
+                    >
+                      <Trash2 size={16} />
+                    </button>
                   )}
                 </div>
               </div>
@@ -2025,6 +2352,272 @@ function AnnouncementsPage({ announcements, isAdmin, onCreate, onDelete }) {
   );
 }
 
+/* ---------------------------------- Expenses ---------------------------------- */
+
+const EXPENSE_CATEGORIES = [
+  "شراء بضاعة",
+  "إيجار",
+  "رواتب",
+  "فواتير (كهرباء / ماء / إنترنت)",
+  "صيانة",
+  "تسويق وإعلانات",
+  "نثريات",
+  "أخرى",
+];
+
+function ExpensesPage({ expenses, onAdd, onDelete, onConfirm }) {
+  const [category, setCategory] = useState(EXPENSE_CATEGORIES[0]);
+  const [description, setDescription] = useState("");
+  const [amount, setAmount] = useState("");
+  const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [categoryFilter, setCategoryFilter] = useState("all");
+  const [search, setSearch] = useState("");
+
+  const submit = () => {
+    const amt = Number(amount);
+    if (!amt || amt <= 0) return;
+    onAdd({
+      category,
+      description,
+      amount: amt,
+      date: date ? new Date(date + "T12:00:00").toISOString() : todayISO(),
+    });
+    setDescription("");
+    setAmount("");
+  };
+
+  let list = expenses;
+  if (categoryFilter !== "all") list = list.filter((e) => e.category === categoryFilter);
+  if (search.trim()) {
+    const q = search.trim().toLowerCase();
+    list = list.filter((e) => e.description.toLowerCase().includes(q));
+  }
+
+  const total = list.reduce((a, e) => a + e.amount, 0);
+  const now = new Date();
+  const thisMonthTotal = expenses
+    .filter((e) => {
+      const d = new Date(e.date);
+      return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
+    })
+    .reduce((a, e) => a + e.amount, 0);
+
+  return (
+    <div className="space-y-5">
+      <h2 className="text-xl font-bold flex items-center gap-2"><Wallet2 size={20} /> المصروفات</h2>
+
+      <div className="grid grid-cols-2 gap-3">
+        <StatCard label="إجمالي المصروفات (حسب الفلتر)" value={fmt(total) + " د.ك"} color="#B23A3A" />
+        <StatCard label="مصروفات هذا الشهر" value={fmt(thisMonthTotal) + " د.ك"} color="var(--accent)" />
+      </div>
+
+      <Card className="p-4 space-y-3">
+        <h3 className="font-bold">تسجيل مصروف جديد</h3>
+        <div className="grid grid-cols-2 gap-3">
+          <Field label="نوع المصروف">
+            <select className={inputCls} value={category} onChange={(e) => setCategory(e.target.value)}>
+              {EXPENSE_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
+            </select>
+          </Field>
+          <Field label="المبلغ (د.ك)">
+            <input type="number" min="0" step="0.001" className={inputCls} value={amount} onChange={(e) => setAmount(e.target.value)} />
+          </Field>
+          <div className="col-span-2">
+            <Field label="الوصف / التفاصيل">
+              <input className={inputCls} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="مثال: شراء عود من المورد الفلاني" />
+            </Field>
+          </div>
+          <Field label="التاريخ">
+            <input type="date" className={inputCls} value={date} onChange={(e) => setDate(e.target.value)} />
+          </Field>
+        </div>
+        <Btn onClick={submit} className="w-full"><Plus size={16} /> تسجيل المصروف</Btn>
+      </Card>
+
+      <div className="flex flex-col sm:flex-row gap-2">
+        <select className={inputCls + " sm:w-56"} value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value)}>
+          <option value="all">كل الأنواع</option>
+          {EXPENSE_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
+        </select>
+        <div className="relative flex-1">
+          <Search size={16} className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--muted)]" />
+          <input className={inputCls + " pr-9"} placeholder="بحث في الوصف..." value={search} onChange={(e) => setSearch(e.target.value)} />
+        </div>
+      </div>
+
+      {list.length === 0 ? (
+        <Card className="p-8"><EmptyState text="لا توجد مصروفات مطابقة" /></Card>
+      ) : (
+        <div className="space-y-2">
+          {list.map((e) => (
+            <Card key={e.id} className="p-3 flex items-center justify-between card-hover">
+              <div>
+                <p className="text-sm font-semibold">{e.category}</p>
+                {e.description && <p className="text-xs text-[var(--muted)]">{e.description}</p>}
+                <p className="text-[11px] text-[var(--muted)]">{e.byUserName} · {dateLabel(e.date)}</p>
+              </div>
+              <div className="flex items-center gap-3">
+                <p className="font-bold text-[#B23A3A]">{fmt(e.amount)} د.ك</p>
+                <button
+                  onClick={() => onConfirm("هل تريد حذف هذا المصروف؟", () => onDelete(e.id))}
+                  className="p-1.5 rounded-lg text-[#B23A3A] hover:bg-[#FBEAEA]"
+                >
+                  <Trash2 size={15} />
+                </button>
+              </div>
+            </Card>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ---------------------------------- Accounting ---------------------------------- */
+
+const STOCK_LOG_LABELS = { gift: "هدايا", damage: "تالف", tester: "فتح للتجربة" };
+
+function AccountingPage({ sales, products, expenses, stockLogs }) {
+  const costById = useMemo(() => {
+    const m = new Map();
+    products.forEach((p) => m.set(p.id, p.cost || 0));
+    return m;
+  }, [products]);
+
+  const totalRevenue = sales.reduce((a, s) => a + s.total, 0);
+  const totalCollected = sales.reduce((a, s) => a + s.collected, 0);
+  const totalRemaining = sales.reduce((a, s) => a + s.remaining, 0);
+
+  const cogs = sales.reduce((sum, s) => {
+    const saleCost = s.items.reduce((a, i) => a + (costById.get(i.productId) || 0) * i.qty, 0);
+    return sum + saleCost;
+  }, 0);
+  const grossProfit = totalRevenue - cogs;
+
+  const totalExpenses = expenses.reduce((a, e) => a + e.amount, 0);
+  const expensesByCategory = useMemo(() => {
+    const map = new Map();
+    expenses.forEach((e) => map.set(e.category, (map.get(e.category) || 0) + e.amount));
+    return Array.from(map.entries()).map(([name, total]) => ({ name, total }));
+  }, [expenses]);
+
+  const shrinkageByType = useMemo(() => {
+    const map = { gift: 0, damage: 0, tester: 0 };
+    stockLogs.forEach((l) => {
+      const cost = costById.get(l.productId) || 0;
+      map[l.type] = (map[l.type] || 0) + cost * l.qty;
+    });
+    return map;
+  }, [stockLogs, costById]);
+  const totalShrinkage = shrinkageByType.gift + shrinkageByType.damage + shrinkageByType.tester;
+
+  const netProfit = grossProfit - totalExpenses - totalShrinkage;
+
+  const inventoryValueCost = products.reduce((a, p) => a + p.stock * (p.cost || 0), 0);
+  const inventoryValueRetail = products.reduce((a, p) => a + p.stock * p.price, 0);
+  const potentialProfit = inventoryValueRetail - inventoryValueCost;
+
+  const chartData = [
+    { name: "المبيعات", value: totalRevenue },
+    { name: "تكلفة البضاعة", value: cogs },
+    { name: "المصروفات", value: totalExpenses },
+    { name: "صافي الربح", value: netProfit },
+  ];
+
+  return (
+    <div className="space-y-5">
+      <h2 className="text-xl font-bold flex items-center gap-2"><Calculator size={20} /> المحاسبة الشاملة</h2>
+      <p className="text-xs text-[var(--muted)] -mt-3">نظرة كاملة تربط المبيعات، تكلفة البضاعة، المصروفات، الهدايا/التالف، وقيمة المخزون في مكان واحد.</p>
+
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <StatCard label="إجمالي المبيعات" value={fmt(totalRevenue) + " د.ك"} color="var(--accent)" />
+        <StatCard label="المحصل" value={fmt(totalCollected) + " د.ك"} color="#3F7D57" />
+        <StatCard label="المتبقي على العملاء" value={fmt(totalRemaining) + " د.ك"} color="#B23A3A" />
+        <StatCard label="تكلفة البضاعة المباعة" value={fmt(cogs) + " د.ك"} color="var(--accent-dark)" />
+      </div>
+
+      <Card className="p-5">
+        <div className="flex items-center justify-between mb-3">
+          <p className="font-bold flex items-center gap-2">
+            {netProfit >= 0 ? <TrendingUp size={18} className="text-[#3F7D57]" /> : <TrendingDown size={18} className="text-[#B23A3A]" />}
+            صافي الربح الحقيقي
+          </p>
+        </div>
+        <p className={`text-3xl font-extrabold ${netProfit >= 0 ? "text-[#3F7D57]" : "text-[#B23A3A]"}`}>{fmt(netProfit)} د.ك</p>
+        <p className="text-xs text-[var(--muted)] mt-2">= إجمالي المبيعات − تكلفة البضاعة − المصروفات − قيمة الهدايا/التالف/التجربة (بسعر التكلفة)</p>
+        <div className="grid grid-cols-3 gap-3 mt-4 pt-4 border-t border-[var(--border)] text-center">
+          <div>
+            <p className="text-[11px] text-[var(--muted)]">الربح الإجمالي</p>
+            <p className="font-bold">{fmt(grossProfit)} د.ك</p>
+          </div>
+          <div>
+            <p className="text-[11px] text-[var(--muted)]">إجمالي المصروفات</p>
+            <p className="font-bold text-[#B23A3A]">{fmt(totalExpenses)} د.ك</p>
+          </div>
+          <div>
+            <p className="text-[11px] text-[var(--muted)]">هدر (هدايا/تالف/تجربة)</p>
+            <p className="font-bold text-[#B23A3A]">{fmt(totalShrinkage)} د.ك</p>
+          </div>
+        </div>
+      </Card>
+
+      <Card className="p-4">
+        <h3 className="font-bold mb-3">مقارنة مالية</h3>
+        <div style={{ width: "100%", height: 240 }}>
+          <ResponsiveContainer>
+            <BarChart data={chartData}>
+              <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
+              <XAxis dataKey="name" tick={{ fontSize: 12 }} />
+              <YAxis tick={{ fontSize: 12 }} />
+              <Tooltip formatter={(v) => fmt(v) + " د.ك"} />
+              <Bar dataKey="value" radius={[6, 6, 0, 0]}>
+                {chartData.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
+              </Bar>
+            </BarChart>
+          </ResponsiveContainer>
+        </div>
+      </Card>
+
+      <div className="grid md:grid-cols-2 gap-4">
+        <Card className="p-4">
+          <h3 className="font-bold mb-3">قيمة المخزون الحالي</h3>
+          <div className="space-y-2 text-sm">
+            <div className="flex justify-between"><span className="text-[var(--muted)]">بسعر التكلفة</span><span className="font-bold">{fmt(inventoryValueCost)} د.ك</span></div>
+            <div className="flex justify-between"><span className="text-[var(--muted)]">بسعر البيع</span><span className="font-bold">{fmt(inventoryValueRetail)} د.ك</span></div>
+            <div className="flex justify-between pt-2 border-t border-[var(--border)]"><span className="text-[var(--muted)]">الربح المحتمل عند بيع كل المخزون</span><span className="font-bold text-[#3F7D57]">{fmt(potentialProfit)} د.ك</span></div>
+          </div>
+        </Card>
+
+        <Card className="p-4">
+          <h3 className="font-bold mb-3">تفصيل الهدر (بسعر التكلفة)</h3>
+          <div className="space-y-2 text-sm">
+            {Object.entries(shrinkageByType).map(([type, val]) => (
+              <div key={type} className="flex justify-between">
+                <span className="text-[var(--muted)]">{STOCK_LOG_LABELS[type]}</span>
+                <span className="font-bold text-[#B23A3A]">{fmt(val)} د.ك</span>
+              </div>
+            ))}
+          </div>
+        </Card>
+      </div>
+
+      {expensesByCategory.length > 0 && (
+        <Card className="p-4">
+          <h3 className="font-bold mb-3">المصروفات حسب النوع</h3>
+          <div className="space-y-2">
+            {expensesByCategory.sort((a, b) => b.total - a.total).map((c) => (
+              <div key={c.name} className="flex justify-between text-sm">
+                <span className="text-[var(--muted)]">{c.name}</span>
+                <span className="font-semibold">{fmt(c.total)} د.ك</span>
+              </div>
+            ))}
+          </div>
+        </Card>
+      )}
+    </div>
+  );
+}
+
 function SettingsPage({ settings, onSave }) {
   const [form, setForm] = useState(settings);
   const fileRef = useRef(null);
@@ -2098,6 +2691,30 @@ function SettingsPage({ settings, onSave }) {
           </div>
         </div>
 
+        <div className="pt-3 border-t border-[var(--border)]">
+          <div className="flex items-center justify-between mb-2">
+            <span className="text-xs font-semibold text-[var(--muted)] flex items-center gap-1.5"><Percent size={14} /> نظام الضريبة (تجهيز مسبق)</span>
+            <button
+              type="button"
+              onClick={() => setForm({ ...form, taxEnabled: !form.taxEnabled })}
+              className={`w-11 h-6 rounded-full relative transition ${form.taxEnabled ? "bg-[var(--accent)]" : "bg-[var(--border)]"}`}
+            >
+              <span className={`absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-all ${form.taxEnabled ? "right-0.5" : "right-5"}`} />
+            </button>
+          </div>
+          <p className="text-[11px] text-[var(--muted)] mb-3">جهّزنا هذا النظام لتطبيق الضريبة عند إقرارها مستقبلاً في دولة الكويت. فعّله فقط عند الحاجة الفعلية.</p>
+          {form.taxEnabled && (
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="اسم الضريبة">
+                <input className={inputCls} value={form.taxLabel} onChange={(e) => setForm({ ...form, taxLabel: e.target.value })} />
+              </Field>
+              <Field label="نسبة الضريبة (%)">
+                <input type="number" min="0" max="100" step="0.1" className={inputCls} value={form.taxRate} onChange={(e) => setForm({ ...form, taxRate: Number(e.target.value) })} />
+              </Field>
+            </div>
+          )}
+        </div>
+
         <Btn onClick={() => onSave(form)} className="w-full"><Save size={16} /> حفظ الإعدادات</Btn>
       </Card>
       <p className="text-xs text-[var(--muted)]">سيظهر اسم الشركة والشعار تلقائياً في جميع الفواتير المطبوعة. تغيير الثيم يطبَّق على واجهة الموقع لجميع المستخدمين.</p>
@@ -2144,7 +2761,7 @@ function BackupPage({ data, onRestore }) {
 
       <Card className="p-4">
         <h3 className="font-bold mb-2">تنزيل نسخة احتياطية</h3>
-        <p className="text-sm text-[#8A7B6C] mb-3">يشمل: المستخدمين، المنتجات، المبيعات، الفواتير، الإعدادات.</p>
+        <p className="text-sm text-[var(--muted)] mb-3">يشمل: المستخدمين، المنتجات، المبيعات، الفواتير، الإعدادات.</p>
         <Btn onClick={exportData}><Download size={16} /> تنزيل نسخة JSON</Btn>
       </Card>
 
@@ -2184,6 +2801,8 @@ function EditSaleModal({ sale, products, onClose, onSave }) {
   const [productId, setProductId] = useState("");
   const [qty, setQty] = useState(1);
   const [unitPrice, setUnitPrice] = useState("");
+  const [discountType, setDiscountType] = useState(sale.discountType || "amount");
+  const [discountValue, setDiscountValue] = useState(String(sale.discountValue || ""));
 
   const selectedProduct = products.find((p) => p.id === productId);
   useEffect(() => {
@@ -2217,7 +2836,12 @@ function EditSaleModal({ sale, products, onClose, onSave }) {
     setItems((c) => c.map((l) => (l.lineId === lineId ? { ...l, qty: newQty, total: newQty * l.price } : l)));
   };
 
-  const total = items.reduce((a, l) => a + l.total, 0);
+  const subtotal = items.reduce((a, l) => a + l.total, 0);
+  const discountNum = Number(discountValue) || 0;
+  const discountAmount = Math.min(subtotal, discountType === "percent" ? subtotal * (discountNum / 100) : discountNum);
+  const afterDiscount = Math.max(0, subtotal - discountAmount);
+  const taxAmount = sale.taxEnabled ? afterDiscount * ((sale.taxRate || 0) / 100) : 0;
+  const total = afterDiscount + taxAmount;
 
   return (
     <div className="fixed inset-0 z-[9998] flex items-center justify-center bg-black/50 p-4 announce-backdrop" dir="rtl">
@@ -2265,6 +2889,29 @@ function EditSaleModal({ sale, products, onClose, onSave }) {
         </Btn>
 
         <div className="flex justify-between text-sm mb-2">
+          <span className="text-[var(--muted)]">المجموع الفرعي</span>
+          <span className="font-semibold">{fmt(subtotal)} د.ك</span>
+        </div>
+
+        <div className="mb-3">
+          <span className="block text-xs font-semibold text-[var(--muted)] mb-1.5 flex items-center gap-1"><Percent size={12} /> الخصم</span>
+          <div className="flex gap-2">
+            <div className="flex rounded-xl overflow-hidden border border-[var(--border)]">
+              <button type="button" onClick={() => setDiscountType("amount")} className={`px-3 py-2 text-xs font-semibold ${discountType === "amount" ? "bg-[var(--accent)] text-white" : "bg-[var(--surface-2)] text-[var(--muted)]"}`}>د.ك</button>
+              <button type="button" onClick={() => setDiscountType("percent")} className={`px-3 py-2 text-xs font-semibold ${discountType === "percent" ? "bg-[var(--accent)] text-white" : "bg-[var(--surface-2)] text-[var(--muted)]"}`}>%</button>
+            </div>
+            <input type="number" min="0" step="0.001" className={inputCls + " flex-1"} value={discountValue} onChange={(e) => setDiscountValue(e.target.value)} />
+          </div>
+        </div>
+
+        {sale.taxEnabled && (
+          <div className="flex justify-between text-sm mb-2">
+            <span className="text-[var(--muted)]">{sale.taxLabel || "الضريبة"} ({sale.taxRate}%)</span>
+            <span className="font-semibold">+ {fmt(taxAmount)} د.ك</span>
+          </div>
+        )}
+
+        <div className="flex justify-between text-sm mb-2 pt-2 border-t border-[var(--border)]">
           <span className="text-[var(--muted)]">الإجمالي الجديد</span>
           <span className="font-extrabold text-lg">{fmt(total)} د.ك</span>
         </div>
@@ -2273,7 +2920,7 @@ function EditSaleModal({ sale, products, onClose, onSave }) {
         </Field>
 
         <div className="flex gap-2 mt-4">
-          <Btn className="flex-1" onClick={() => onSave(items, Number(collected) || 0)}>
+          <Btn className="flex-1" onClick={() => onSave(items, Number(collected) || 0, discountType, discountNum)}>
             <Save size={16} /> حفظ التعديلات
           </Btn>
           <Btn variant="outline" onClick={onClose}>إلغاء</Btn>
@@ -2494,6 +3141,19 @@ function InvoiceDoc({ sale, settings }) {
       </table>
 
       <div style={{ marginTop: 20, marginRight: "auto", width: 260, marginLeft: 0, marginInlineStart: "auto" }}>
+        {sale.subtotal !== undefined && sale.subtotal !== sale.total && (
+          <TotalRow label="المجموع الفرعي" value={sale.subtotal} />
+        )}
+        {sale.discountAmount > 0 && (
+          <TotalRow
+            label={`الخصم${sale.discountType === "percent" ? ` (${sale.discountValue}%)` : ""}`}
+            value={-sale.discountAmount}
+            color="#B23A3A"
+          />
+        )}
+        {sale.taxEnabled && sale.taxAmount > 0 && (
+          <TotalRow label={`${sale.taxLabel || "الضريبة"} (${sale.taxRate}%)`} value={sale.taxAmount} />
+        )}
         <TotalRow label="الإجمالي الكلي" value={sale.total} bold />
         <TotalRow label="المبلغ المحصل" value={sale.collected} color="#3F7D57" />
         <TotalRow label="المبلغ المتبقي" value={sale.remaining} color="#B23A3A" />
