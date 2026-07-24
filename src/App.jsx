@@ -4,7 +4,8 @@ import {
   BarChart3, Settings as SettingsIcon, Users as UsersIcon, Search, X, Check,
   Menu, Save, Image as ImageIcon, ShoppingCart, Home, AlertTriangle, Eye, EyeOff,
   Sun, Moon, Pencil, Wallet, Tag, MessageSquare, Megaphone, Gift, Ban,
-  Wallet2, Calculator, Percent, Droplet, TrendingUp, TrendingDown, ShieldCheck, Bell
+  Wallet2, Calculator, Percent, Droplet, TrendingUp, TrendingDown, ShieldCheck, Bell,
+  Landmark, PiggyBank, HandCoins, CalendarRange, Users2
 } from "lucide-react";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
@@ -463,6 +464,7 @@ const NAV_ITEMS = [
   { key: "announcements", label: "التعاميم", icon: Megaphone, roles: ["admin", "seller"] },
   { key: "expenses", label: "المصروفات", icon: Wallet2, roles: ["admin"] },
   { key: "accounting", label: "المحاسبة", icon: Calculator, roles: ["admin"] },
+  { key: "capital", label: "رأس المال والشركاء", icon: Landmark, roles: ["admin"] },
   { key: "users", label: "المستخدمون", icon: UsersIcon, roles: ["admin"] },
   { key: "settings", label: "الإعدادات", icon: SettingsIcon, roles: ["admin"] },
   { key: "backup", label: "النسخ الاحتياطي", icon: Save, roles: ["admin"] },
@@ -476,7 +478,7 @@ export default function App() {
   const [products, setProducts] = useState([]);
   const [sales, setSales] = useState([]);
   const [seq, setSeq] = useState({});
-  const [settings, setSettings] = useState({ companyName: "عطورنا للعطور والبخور", logo: "", phone: "", address: "", theme: "classic", taxEnabled: false, taxRate: 5, taxLabel: "ضريبة القيمة المضافة" });
+  const [settings, setSettings] = useState({ companyName: "عطورنا للعطور والبخور", logo: "", phone: "", address: "", theme: "classic", taxEnabled: false, taxRate: 5, taxLabel: "ضريبة القيمة المضافة", initialCapital: 0 });
   const [currentUser, setCurrentUser] = useState(null);
   const [view, setView] = useState("dashboard");
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
@@ -488,6 +490,9 @@ export default function App() {
   const [announcementQueue, setAnnouncementQueue] = useState([]); // ids waiting to be shown as popups
   const [stockLogs, setStockLogs] = useState([]); // gifted / damaged / tester product adjustments
   const [expenses, setExpenses] = useState([]);
+  const [partners, setPartners] = useState([]);
+  const [paymentLogs, setPaymentLogs] = useState([]); // dated ledger of every dinar actually collected
+  const [profitDistributions, setProfitDistributions] = useState([]); // saved profit-sharing history
   const [darkMode, setDarkMode] = useState(false);
   const [toast, setToast] = useState("");
   const [confirmState, setConfirmState] = useState(null); // { message, onConfirm }
@@ -505,12 +510,15 @@ export default function App() {
     const p = await storeGet("perfume_products", []);
     const s = await storeGet("perfume_sales", []);
     const sq = await storeGet("perfume_seq", {});
-    const st = await storeGet("perfume_settings", { companyName: "عطورنا للعطور والبخور", logo: "", phone: "", address: "", theme: "classic", taxEnabled: false, taxRate: 5, taxLabel: "ضريبة القيمة المضافة" });
+    const st = await storeGet("perfume_settings", { companyName: "عطورنا للعطور والبخور", logo: "", phone: "", address: "", theme: "classic", taxEnabled: false, taxRate: 5, taxLabel: "ضريبة القيمة المضافة", initialCapital: 0 });
     const an = await storeGet("perfume_announcements", []);
     const sl = await storeGet("perfume_stock_logs", []);
     const ex = await storeGet("perfume_expenses", []);
+    const pt = await storeGet("perfume_partners", []);
+    const pl = await storeGet("perfume_payment_logs", []);
+    const pd = await storeGet("perfume_profit_distributions", []);
 
-    const snapshot = JSON.stringify({ u, p, s, sq, st, an, sl, ex });
+    const snapshot = JSON.stringify({ u, p, s, sq, st, an, sl, ex, pt, pl, pd });
     if (snapshot === lastSnapshot.current) return; // nothing new, avoid needless re-render
     lastSnapshot.current = snapshot;
 
@@ -522,6 +530,9 @@ export default function App() {
     setAnnouncements(an);
     setStockLogs(sl);
     setExpenses(ex);
+    setPartners(pt);
+    setPaymentLogs(pl);
+    setProfitDistributions(pd);
     if (isInitial) setLoading(false);
   }, []);
 
@@ -671,6 +682,46 @@ export default function App() {
 
   const deleteExpense = async (id) => {
     await persistExpenses(expenses.filter((e) => e.id !== id));
+  };
+
+  const persistPartners = async (next) => { setPartners(next); await storeSet("perfume_partners", next); };
+  const persistPaymentLogs = async (next) => { setPaymentLogs(next); await storeSet("perfume_payment_logs", next); };
+  const persistProfitDistributions = async (next) => { setProfitDistributions(next); await storeSet("perfume_profit_distributions", next); };
+
+  // Records the exact date + amount every time cash is actually received —
+  // whether at the moment of sale or later via "تسجيل تحصيل". This dated
+  // ledger is what makes weekly/monthly profit-sharing calculations accurate,
+  // instead of relying only on the sale's original creation date.
+  const logPayment = async (sale, amount) => {
+    if (!amount || amount <= 0) return;
+    const entry = {
+      id: uid(),
+      saleId: sale.id,
+      invoiceNo: sale.invoiceNo,
+      amount,
+      date: todayISO(),
+      byUserName: currentUser.name,
+    };
+    await persistPaymentLogs([entry, ...paymentLogs]);
+  };
+
+  const savePartners = async (next) => {
+    await persistPartners(next);
+    showToast("تم حفظ بيانات الشركاء");
+  };
+
+  const saveInitialCapital = async (amount) => {
+    await persistSettings({ ...settings, initialCapital: Number(amount) || 0 });
+    showToast("تم حفظ رأس المال الأساسي");
+  };
+
+  const saveProfitDistribution = async (record) => {
+    await persistProfitDistributions([record, ...profitDistributions]);
+    showToast("تم حفظ توزيع الأرباح بالسجل");
+  };
+
+  const deleteProfitDistribution = async (id) => {
+    await persistProfitDistributions(profitDistributions.filter((d) => d.id !== id));
   };
 
   const updateSale = async (id, updates) => {
@@ -945,6 +996,7 @@ export default function App() {
                 await persistProducts(updatedProducts);
                 await persistSales([sale, ...sales]);
                 await persistSeq(newSeq);
+                if (sale.collected > 0) await logPayment(sale, sale.collected);
                 showToast("تم تسجيل عملية البيع وإصدار الفاتورة بنجاح");
                 setPrintPayload({ type: "invoice", data: sale });
                 setView("records");
@@ -968,6 +1020,7 @@ export default function App() {
                 if (!sale) return;
                 const collected = Math.min(sale.total, sale.collected + amount);
                 await updateSale(id, { collected, remaining: Math.max(0, sale.total - collected) });
+                await logPayment(sale, collected - sale.collected);
                 showToast("تم تسجيل التحصيل");
               }}
               onEditSale={(sale) => setEditingSale(sale)}
@@ -1014,6 +1067,25 @@ export default function App() {
               stockLogs={stockLogs}
             />
           )}
+          {view === "capital" && isAdmin && (
+            <CapitalPartnersPage
+              settings={settings}
+              sales={sales}
+              products={products}
+              expenses={expenses}
+              stockLogs={stockLogs}
+              partners={partners}
+              paymentLogs={paymentLogs}
+              profitDistributions={profitDistributions}
+              currentUser={currentUser}
+              onSavePartners={savePartners}
+              onSaveCapital={saveInitialCapital}
+              onSaveDistribution={saveProfitDistribution}
+              onDeleteDistribution={deleteProfitDistribution}
+              onConfirm={askConfirm}
+              onPrint={(data) => setPrintPayload({ type: "distribution", data })}
+            />
+          )}
           {view === "users" && isAdmin && (
             <UsersAdmin users={users} onSave={async (next) => { await persistUsers(next); showToast("تم حفظ المستخدمين"); }} onConfirm={askConfirm} />
           )}
@@ -1022,7 +1094,7 @@ export default function App() {
           )}
           {view === "backup" && isAdmin && (
             <BackupPage
-              data={{ users, products, sales, seq, settings, announcements, stockLogs, expenses }}
+              data={{ users, products, sales, seq, settings, announcements, stockLogs, expenses, partners, paymentLogs, profitDistributions }}
               onRestore={async (next, mode) => {
                 if (mode === "replace") {
                   await persistUsers(next.users || users);
@@ -1033,6 +1105,9 @@ export default function App() {
                   await persistAnnouncements(next.announcements || announcements);
                   await persistStockLogs(next.stockLogs || stockLogs);
                   await persistExpenses(next.expenses || expenses);
+                  await persistPartners(next.partners || partners);
+                  await persistPaymentLogs(next.paymentLogs || paymentLogs);
+                  await persistProfitDistributions(next.profitDistributions || profitDistributions);
                 } else {
                   const mergeById = (a, b) => {
                     const map = new Map(a.map((x) => [x.id, x]));
@@ -1047,6 +1122,9 @@ export default function App() {
                   await persistAnnouncements(mergeById(announcements, next.announcements));
                   await persistStockLogs(mergeById(stockLogs, next.stockLogs));
                   await persistExpenses(mergeById(expenses, next.expenses));
+                  await persistPartners(mergeById(partners, next.partners));
+                  await persistPaymentLogs(mergeById(paymentLogs, next.paymentLogs));
+                  await persistProfitDistributions(mergeById(profitDistributions, next.profitDistributions));
                 }
                 showToast("تمت استعادة البيانات بنجاح");
               }}
@@ -2636,6 +2714,317 @@ function AccountingPage({ sales, products, expenses, stockLogs }) {
   );
 }
 
+/* ---------------------------------- Capital & Partners Profit Sharing ---------------------------------- */
+
+function toDateInputValue(d) {
+  return d.toISOString().slice(0, 10);
+}
+function startOfDay(d) {
+  const x = new Date(d);
+  x.setHours(0, 0, 0, 0);
+  return x;
+}
+function endOfDay(d) {
+  const x = new Date(d);
+  x.setHours(23, 59, 59, 999);
+  return x;
+}
+
+function CapitalPartnersPage({
+  settings, sales, products, expenses, stockLogs, partners, paymentLogs, profitDistributions,
+  currentUser, onSavePartners, onSaveCapital, onSaveDistribution, onDeleteDistribution, onConfirm, onPrint,
+}) {
+  const [capitalInput, setCapitalInput] = useState(String(settings.initialCapital || 0));
+  const [partnerCount, setPartnerCount] = useState(partners.length || 2);
+  const [localPartners, setLocalPartners] = useState(
+    partners.length ? partners : [{ id: uid(), name: "الشريك الأول", percent: 50 }, { id: uid(), name: "الشريك الثاني", percent: 50 }]
+  );
+  const [periodType, setPeriodType] = useState("weekly"); // weekly | monthly | custom
+  const [weekEndDate, setWeekEndDate] = useState(toDateInputValue(new Date()));
+  const [monthValue, setMonthValue] = useState(new Date().toISOString().slice(0, 7));
+  const [customStart, setCustomStart] = useState(toDateInputValue(new Date(new Date().setDate(new Date().getDate() - 6))));
+  const [customEnd, setCustomEnd] = useState(toDateInputValue(new Date()));
+  const [result, setResult] = useState(null);
+
+  // ---- All-time accrual estimate (informational, ties Capital to the Accounting page) ----
+  const costById = useMemo(() => {
+    const m = new Map();
+    products.forEach((p) => m.set(p.id, p.cost || 0));
+    return m;
+  }, [products]);
+  const allTimeRevenue = sales.reduce((a, s) => a + s.total, 0);
+  const allTimeCogs = sales.reduce((sum, s) => sum + s.items.reduce((a, i) => a + (costById.get(i.productId) || 0) * i.qty, 0), 0);
+  const allTimeExpenses = expenses.reduce((a, e) => a + e.amount, 0);
+  const allTimeShrinkage = stockLogs.reduce((a, l) => a + (costById.get(l.productId) || 0) * l.qty, 0);
+  const allTimeNetProfit = allTimeRevenue - allTimeCogs - allTimeExpenses - allTimeShrinkage;
+  const estimatedCurrentCapital = (settings.initialCapital || 0) + allTimeNetProfit;
+
+  // ---- Partner setup ----
+  const totalPercent = localPartners.reduce((a, p) => a + Number(p.percent || 0), 0);
+  const percentValid = Math.abs(totalPercent - 100) < 0.01;
+
+  const generateEqualPartners = () => {
+    const n = Math.max(1, Math.min(20, Number(partnerCount) || 1));
+    const base = Math.floor((100 / n) * 100) / 100;
+    const list = Array.from({ length: n }).map((_, i) => ({ id: uid(), name: `الشريك ${i + 1}`, percent: base }));
+    const sum = list.reduce((a, p) => a + p.percent, 0);
+    list[list.length - 1].percent = Math.round((list[list.length - 1].percent + (100 - sum)) * 100) / 100;
+    setLocalPartners(list);
+  };
+
+  const updatePartner = (id, field, value) => {
+    setLocalPartners((list) => list.map((p) => (p.id === id ? { ...p, [field]: value } : p)));
+  };
+  const removePartner = (id) => setLocalPartners((list) => list.filter((p) => p.id !== id));
+  const addPartner = () => setLocalPartners((list) => [...list, { id: uid(), name: `شريك ${list.length + 1}`, percent: 0 }]);
+
+  // ---- Distribution calculator ----
+  const getPeriodRange = () => {
+    if (periodType === "weekly") {
+      const end = endOfDay(new Date(weekEndDate + "T12:00:00"));
+      const start = startOfDay(new Date(end));
+      start.setDate(start.getDate() - 6);
+      return { start, end, label: `أسبوعي — من ${dateLabel(start)} إلى ${dateLabel(end)}` };
+    }
+    if (periodType === "monthly") {
+      const [y, m] = monthValue.split("-").map(Number);
+      const start = new Date(y, m - 1, 1, 0, 0, 0);
+      const end = new Date(y, m, 0, 23, 59, 59);
+      const monthNames = ["يناير", "فبراير", "مارس", "أبريل", "مايو", "يونيو", "يوليو", "أغسطس", "سبتمبر", "أكتوبر", "نوفمبر", "ديسمبر"];
+      return { start, end, label: `شهري — ${monthNames[m - 1]} ${y}` };
+    }
+    const start = startOfDay(new Date(customStart + "T12:00:00"));
+    const end = endOfDay(new Date(customEnd + "T12:00:00"));
+    return { start, end, label: `فترة مخصصة — من ${dateLabel(start)} إلى ${dateLabel(end)}` };
+  };
+
+  const calculate = () => {
+    if (!percentValid) return;
+    const { start, end, label } = getPeriodRange();
+
+    const saleById = new Map(sales.map((s) => [s.id, s]));
+
+    const periodPayments = paymentLogs.filter((pl) => {
+      const d = new Date(pl.date);
+      return d >= start && d <= end;
+    });
+    const collectedCash = periodPayments.reduce((a, pl) => a + pl.amount, 0);
+
+    const grossProfit = periodPayments.reduce((sum, pl) => {
+      const sale = saleById.get(pl.saleId);
+      if (!sale || !sale.total) return sum; // conservative: unknown sale contributes 0 profit
+      const saleCost = sale.items.reduce((a, i) => a + (costById.get(i.productId) || 0) * i.qty, 0);
+      const costRatio = saleCost / sale.total;
+      return sum + pl.amount * (1 - costRatio);
+    }, 0);
+
+    const periodExpenses = expenses
+      .filter((e) => { const d = new Date(e.date); return d >= start && d <= end; })
+      .reduce((a, e) => a + e.amount, 0);
+
+    const periodShrinkage = stockLogs
+      .filter((l) => { const d = new Date(l.date); return d >= start && d <= end; })
+      .reduce((a, l) => a + (costById.get(l.productId) || 0) * l.qty, 0);
+
+    const netProfit = grossProfit - periodExpenses - periodShrinkage;
+
+    const partnersBreakdown = localPartners.map((p) => ({
+      id: p.id,
+      name: p.name,
+      percent: Number(p.percent),
+      amount: netProfit * (Number(p.percent) / 100),
+    }));
+
+    setResult({
+      id: uid(),
+      periodType,
+      periodLabel: label,
+      periodStart: start.toISOString(),
+      periodEnd: end.toISOString(),
+      collectedCash,
+      grossProfit,
+      periodExpenses,
+      periodShrinkage,
+      netProfit,
+      partners: partnersBreakdown,
+      date: todayISO(),
+      byUserName: currentUser.name,
+    });
+  };
+
+  return (
+    <div className="space-y-5">
+      <h2 className="text-xl font-bold flex items-center gap-2"><Landmark size={20} /> رأس المال والشركاء</h2>
+      <p className="text-xs text-[var(--muted)] -mt-3">إدارة رأس المال الأساسي، تحديد الشركاء ونسبهم، واحتساب توزيع الأرباح الأسبوعي أو الشهري بدقة اعتماداً على المبالغ المحصَّلة فعلياً.</p>
+
+      {/* Capital */}
+      <Card className="p-4">
+        <h3 className="font-bold mb-3 flex items-center gap-2"><PiggyBank size={18} /> رأس المال الأساسي</h3>
+        <div className="flex gap-2 items-end">
+          <div className="flex-1">
+            <Field label="رأس المال الأساسي الأول (د.ك)">
+              <input type="number" min="0" step="0.001" className={inputCls} value={capitalInput} onChange={(e) => setCapitalInput(e.target.value)} />
+            </Field>
+          </div>
+          <Btn onClick={() => onSaveCapital(capitalInput)}><Save size={16} /> حفظ</Btn>
+        </div>
+        <div className="mt-4 pt-4 border-t border-[var(--border)] grid grid-cols-2 gap-3 text-center">
+          <div>
+            <p className="text-[11px] text-[var(--muted)]">رأس المال المسجَّل</p>
+            <p className="font-bold">{fmt(settings.initialCapital || 0)} د.ك</p>
+          </div>
+          <div>
+            <p className="text-[11px] text-[var(--muted)]">تقدير رأس المال الحالي (شامل الأرباح المتراكمة)</p>
+            <p className={`font-bold ${estimatedCurrentCapital >= (settings.initialCapital || 0) ? "text-[#3F7D57]" : "text-[#B23A3A]"}`}>{fmt(estimatedCurrentCapital)} د.ك</p>
+          </div>
+        </div>
+      </Card>
+
+      {/* Partners */}
+      <Card className="p-4">
+        <h3 className="font-bold mb-3 flex items-center gap-2"><Users2 size={18} /> الشركاء ونسب الأرباح</h3>
+        <div className="flex gap-2 items-end mb-4">
+          <div className="w-28">
+            <Field label="عدد الشركاء">
+              <input type="number" min="1" max="20" className={inputCls} value={partnerCount} onChange={(e) => setPartnerCount(e.target.value)} />
+            </Field>
+          </div>
+          <Btn variant="outline" onClick={generateEqualPartners}>توليد بالتساوي</Btn>
+          <Btn variant="ghost" onClick={addPartner}><Plus size={14} /> إضافة شريك</Btn>
+        </div>
+
+        <div className="space-y-2">
+          {localPartners.map((p) => (
+            <div key={p.id} className="flex gap-2 items-center">
+              <input className={inputCls + " flex-1"} value={p.name} onChange={(e) => updatePartner(p.id, "name", e.target.value)} />
+              <div className="relative w-24">
+                <input type="number" min="0" max="100" step="0.01" className={inputCls + " pl-6"} value={p.percent} onChange={(e) => updatePartner(p.id, "percent", e.target.value)} />
+                <Percent size={13} className="absolute left-2 top-1/2 -translate-y-1/2 text-[var(--muted)]" />
+              </div>
+              <button onClick={() => removePartner(p.id)} className="p-2 text-[#B23A3A]"><Trash2 size={16} /></button>
+            </div>
+          ))}
+        </div>
+
+        <div className={`mt-3 text-xs font-semibold flex items-center gap-1.5 ${percentValid ? "text-[#3F7D57]" : "text-[#B23A3A]"}`}>
+          {percentValid ? <Check size={14} /> : <AlertTriangle size={14} />}
+          إجمالي النسب: {totalPercent.toFixed(2)}% {percentValid ? "✓ صحيح" : "— يجب أن يساوي 100%"}
+        </div>
+
+        <Btn className="w-full mt-3" onClick={() => onSavePartners(localPartners)} disabled={!percentValid}>
+          <Save size={16} /> حفظ بيانات الشركاء
+        </Btn>
+      </Card>
+
+      {/* Distribution calculator */}
+      <Card className="p-4">
+        <h3 className="font-bold mb-3 flex items-center gap-2"><HandCoins size={18} /> حاسبة توزيع الأرباح</h3>
+
+        <div className="flex gap-2 mb-3">
+          {[["weekly", "أسبوعي"], ["monthly", "شهري"], ["custom", "فترة مخصصة"]].map(([key, label]) => (
+            <button
+              key={key}
+              onClick={() => { setPeriodType(key); setResult(null); }}
+              className={`flex-1 py-2 rounded-lg text-xs font-semibold transition ${periodType === key ? "bg-[var(--accent)] text-white" : "bg-[var(--surface-2)] text-[var(--muted)]"}`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+
+        {periodType === "weekly" && (
+          <Field label="آخر 7 أيام تنتهي بتاريخ">
+            <input type="date" className={inputCls} value={weekEndDate} onChange={(e) => setWeekEndDate(e.target.value)} />
+          </Field>
+        )}
+        {periodType === "monthly" && (
+          <Field label="الشهر">
+            <input type="month" className={inputCls} value={monthValue} onChange={(e) => setMonthValue(e.target.value)} />
+          </Field>
+        )}
+        {periodType === "custom" && (
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="من تاريخ"><input type="date" className={inputCls} value={customStart} onChange={(e) => setCustomStart(e.target.value)} /></Field>
+            <Field label="إلى تاريخ"><input type="date" className={inputCls} value={customEnd} onChange={(e) => setCustomEnd(e.target.value)} /></Field>
+          </div>
+        )}
+
+        <Btn className="w-full mt-3" onClick={calculate} disabled={!percentValid}>
+          <Calculator size={16} /> احتساب توزيع الأرباح
+        </Btn>
+        {!percentValid && <p className="text-[11px] text-[#B23A3A] mt-2">أكمل نسب الشركاء بحيث تساوي 100% قبل الاحتساب</p>}
+
+        {result && (
+          <div className="mt-4 pt-4 border-t border-[var(--border)] space-y-3 fade-in">
+            <p className="text-xs font-semibold text-[var(--accent-dark)]">{result.periodLabel}</p>
+            <div className="grid grid-cols-2 gap-2 text-sm">
+              <div className="bg-[var(--surface-2)] rounded-xl p-2.5">
+                <p className="text-[10px] text-[var(--muted)]">النقد المحصَّل</p>
+                <p className="font-bold">{fmt(result.collectedCash)} د.ك</p>
+              </div>
+              <div className="bg-[var(--surface-2)] rounded-xl p-2.5">
+                <p className="text-[10px] text-[var(--muted)]">الربح الإجمالي (بعد التكلفة)</p>
+                <p className="font-bold">{fmt(result.grossProfit)} د.ك</p>
+              </div>
+              <div className="bg-[var(--surface-2)] rounded-xl p-2.5">
+                <p className="text-[10px] text-[var(--muted)]">مصروفات الفترة</p>
+                <p className="font-bold text-[#B23A3A]">{fmt(result.periodExpenses)} د.ك</p>
+              </div>
+              <div className="bg-[var(--surface-2)] rounded-xl p-2.5">
+                <p className="text-[10px] text-[var(--muted)]">هدر الفترة</p>
+                <p className="font-bold text-[#B23A3A]">{fmt(result.periodShrinkage)} د.ك</p>
+              </div>
+            </div>
+            <div className="bg-[var(--surface-3)] rounded-xl p-3 text-center">
+              <p className="text-[11px] text-[var(--muted)]">صافي الربح القابل للتوزيع</p>
+              <p className={`text-xl font-extrabold ${result.netProfit >= 0 ? "text-[#3F7D57]" : "text-[#B23A3A]"}`}>{fmt(result.netProfit)} د.ك</p>
+            </div>
+
+            <div className="space-y-1.5">
+              {result.partners.map((p) => (
+                <div key={p.id} className="flex justify-between items-center text-sm bg-[var(--surface-2)] rounded-lg px-3 py-2">
+                  <span className="font-semibold">{p.name} <span className="text-[var(--muted)] font-normal">({p.percent}%)</span></span>
+                  <span className="font-bold text-[var(--accent)]">{fmt(p.amount)} د.ك</span>
+                </div>
+              ))}
+            </div>
+
+            <div className="flex gap-2 pt-2">
+              <Btn className="flex-1" onClick={() => onSaveDistribution(result)}><Save size={16} /> حفظ بالسجل</Btn>
+              <Btn variant="outline" onClick={() => onPrint(result)}><Printer size={16} /> طباعة</Btn>
+            </div>
+          </div>
+        )}
+      </Card>
+
+      {/* History */}
+      <div>
+        <h3 className="font-bold mb-3 flex items-center gap-2"><CalendarRange size={18} /> سجل توزيعات الأرباح السابقة</h3>
+        {profitDistributions.length === 0 ? (
+          <Card className="p-6"><EmptyState text="لا توجد توزيعات محفوظة بعد" /></Card>
+        ) : (
+          <div className="space-y-2">
+            {profitDistributions.map((d) => (
+              <Card key={d.id} className="p-3 card-hover">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-semibold">{d.periodLabel}</p>
+                    <p className="text-[11px] text-[var(--muted)]">صافي الربح: {fmt(d.netProfit)} د.ك · بواسطة {d.byUserName} · {dateLabel(d.date)}</p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button onClick={() => onPrint(d)} className="p-1.5 rounded-lg text-[var(--accent-dark)] hover:bg-[var(--surface-3)]"><Printer size={15} /></button>
+                    <button onClick={() => onConfirm("هل تريد حذف هذا التوزيع من السجل؟", () => onDeleteDistribution(d.id))} className="p-1.5 rounded-lg text-[#B23A3A] hover:bg-[#FBEAEA]"><Trash2 size={15} /></button>
+                  </div>
+                </div>
+              </Card>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function SettingsPage({ settings, onSave }) {
   const [form, setForm] = useState(settings);
   const fileRef = useRef(null);
@@ -3091,8 +3480,10 @@ function PrintArea({ payload, settings, onClose }) {
       <div className="print-sheet" dir="rtl" style={{ fontFamily: "'Tajawal', sans-serif", color: "#2B211A" }}>
         {payload.type === "invoice" ? (
           <InvoiceDoc sale={payload.data} settings={settings} />
-        ) : (
+        ) : payload.type === "record" ? (
           <RecordDoc sellerName={payload.data.sellerName} list={payload.data.list} settings={settings} />
+        ) : (
+          <DistributionDoc data={payload.data} settings={settings} />
         )}
       </div>
     </div>
@@ -3230,6 +3621,53 @@ function RecordDoc({ sellerName, list, settings }) {
 
 const thStyle = { textAlign: "right", padding: "8px 10px", borderBottom: "2px solid #E3D6BE", fontWeight: 700 };
 const tdStyle = { textAlign: "right", padding: "8px 10px", borderBottom: "1px solid #F0E6D0" };
+
+function DistributionDoc({ data, settings }) {
+  return (
+    <div>
+      <DocHeader settings={settings} />
+      <h2 style={{ fontSize: 18, fontWeight: 800, marginBottom: 4 }}>تقرير توزيع الأرباح</h2>
+      <p style={{ fontSize: 12, color: "#8A7B6C", marginBottom: 4 }}>{data.periodLabel}</p>
+      <p style={{ fontSize: 11, color: "#8A7B6C", marginBottom: 16 }}>من {dateLabel(data.periodStart)} إلى {dateLabel(data.periodEnd)}</p>
+
+      <div style={{ background: "#F7F1E6", borderRadius: 10, padding: "12px 16px", marginBottom: 16 }}>
+        <TotalRow label="النقد المحصَّل خلال الفترة" value={data.collectedCash} />
+        <TotalRow label="الربح الإجمالي (بعد خصم تكلفة البضاعة)" value={data.grossProfit} />
+        <TotalRow label="المصروفات خلال الفترة" value={-data.periodExpenses} color="#B23A3A" />
+        <TotalRow label="الهدر (هدايا / تالف / تجربة)" value={-data.periodShrinkage} color="#B23A3A" />
+        <div style={{ borderTop: "2px solid #E3D6BE", marginTop: 6, paddingTop: 6 }}>
+          <TotalRow label="صافي الربح القابل للتوزيع" value={data.netProfit} bold color={data.netProfit >= 0 ? "#3F7D57" : "#B23A3A"} />
+        </div>
+      </div>
+
+      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+        <thead>
+          <tr style={{ background: "#F7F1E6" }}>
+            <th style={thStyle}>الشريك</th>
+            <th style={thStyle}>النسبة</th>
+            <th style={thStyle}>المبلغ المستحق</th>
+          </tr>
+        </thead>
+        <tbody>
+          {data.partners.map((p) => (
+            <tr key={p.id}>
+              <td style={tdStyle}>{p.name}</td>
+              <td style={tdStyle}>{p.percent}%</td>
+              <td style={tdStyle}>{fmt(p.amount)} د.ك</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+
+      <p style={{ marginTop: 24, fontSize: 11, color: "#8A7B6C" }}>
+        رأس المال الأساسي المسجَّل: {fmt(settings.initialCapital || 0)} د.ك
+      </p>
+      <p style={{ marginTop: 40, fontSize: 11, color: "#8A7B6C", textAlign: "center" }}>
+        تقرير داخلي لتوزيع الأرباح — {settings.companyName || "عطورنا"}
+      </p>
+    </div>
+  );
+}
 
 function TotalRow({ label, value, bold, color }) {
   return (
