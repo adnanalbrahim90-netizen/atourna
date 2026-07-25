@@ -4,7 +4,8 @@ import {
   BarChart3, Settings as SettingsIcon, Users as UsersIcon, Search, X, Check,
   Menu, Save, Image as ImageIcon, ShoppingCart, Home, AlertTriangle, Eye, EyeOff,
   Sun, Moon, Pencil, Wallet, Tag, MessageSquare, Megaphone, Gift, Ban,
-  Wallet2, Calculator, Percent, Droplet, TrendingUp, TrendingDown, ShieldCheck, Bell
+  Wallet2, Calculator, Percent, Droplet, TrendingUp, TrendingDown, ShieldCheck, Bell,
+  Landmark, HandCoins, CalendarRange, Users2
 } from "lucide-react";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
@@ -463,6 +464,7 @@ const NAV_ITEMS = [
   { key: "announcements", label: "التعاميم", icon: Megaphone, roles: ["admin", "seller"] },
   { key: "expenses", label: "المصروفات", icon: Wallet2, roles: ["admin"] },
   { key: "accounting", label: "المحاسبة", icon: Calculator, roles: ["admin"] },
+  { key: "capital", label: "حساب أرباح الشركاء", icon: Landmark, roles: ["admin"] },
   { key: "users", label: "المستخدمون", icon: UsersIcon, roles: ["admin"] },
   { key: "settings", label: "الإعدادات", icon: SettingsIcon, roles: ["admin"] },
   { key: "backup", label: "النسخ الاحتياطي", icon: Save, roles: ["admin"] },
@@ -488,6 +490,8 @@ export default function App() {
   const [announcementQueue, setAnnouncementQueue] = useState([]); // ids waiting to be shown as popups
   const [stockLogs, setStockLogs] = useState([]); // gifted / damaged / tester product adjustments
   const [expenses, setExpenses] = useState([]);
+  const [partners, setPartners] = useState([]);
+  const [profitDistributions, setProfitDistributions] = useState([]); // saved profit-sharing history
   const [darkMode, setDarkMode] = useState(false);
   const [toast, setToast] = useState("");
   const [confirmState, setConfirmState] = useState(null); // { message, onConfirm }
@@ -509,8 +513,10 @@ export default function App() {
     const an = await storeGet("perfume_announcements", []);
     const sl = await storeGet("perfume_stock_logs", []);
     const ex = await storeGet("perfume_expenses", []);
+    const pt = await storeGet("perfume_partners", []);
+    const pd = await storeGet("perfume_profit_distributions", []);
 
-    const snapshot = JSON.stringify({ u, p, s, sq, st, an, sl, ex });
+    const snapshot = JSON.stringify({ u, p, s, sq, st, an, sl, ex, pt, pd });
     if (snapshot === lastSnapshot.current) return; // nothing new, avoid needless re-render
     lastSnapshot.current = snapshot;
 
@@ -522,6 +528,8 @@ export default function App() {
     setAnnouncements(an);
     setStockLogs(sl);
     setExpenses(ex);
+    setPartners(pt);
+    setProfitDistributions(pd);
     if (isInitial) setLoading(false);
   }, []);
 
@@ -651,7 +659,13 @@ export default function App() {
   };
 
   const deleteStockLog = async (id) => {
+    const log = stockLogs.find((l) => l.id === id);
+    if (log) {
+      const updatedProducts = products.map((p) => (p.id === log.productId ? { ...p, stock: p.stock + log.qty } : p));
+      await persistProducts(updatedProducts);
+    }
     await persistStockLogs(stockLogs.filter((l) => l.id !== id));
+    showToast("تم حذف السجل وإرجاع الكمية إلى المخزون");
   };
 
   const persistExpenses = async (next) => { setExpenses(next); await storeSet("perfume_expenses", next); };
@@ -671,6 +685,23 @@ export default function App() {
 
   const deleteExpense = async (id) => {
     await persistExpenses(expenses.filter((e) => e.id !== id));
+  };
+
+  const persistPartners = async (next) => { setPartners(next); await storeSet("perfume_partners", next); };
+  const persistProfitDistributions = async (next) => { setProfitDistributions(next); await storeSet("perfume_profit_distributions", next); };
+
+  const savePartners = async (next) => {
+    await persistPartners(next);
+    showToast("تم حفظ بيانات الشركاء");
+  };
+
+  const saveProfitDistribution = async (record) => {
+    await persistProfitDistributions([record, ...profitDistributions]);
+    showToast("تم حفظ توزيع الأرباح بالسجل");
+  };
+
+  const deleteProfitDistribution = async (id) => {
+    await persistProfitDistributions(profitDistributions.filter((d) => d.id !== id));
   };
 
   const updateSale = async (id, updates) => {
@@ -1014,6 +1045,22 @@ export default function App() {
               stockLogs={stockLogs}
             />
           )}
+          {view === "capital" && isAdmin && (
+            <CapitalPartnersPage
+              sales={sales}
+              products={products}
+              expenses={expenses}
+              stockLogs={stockLogs}
+              partners={partners}
+              profitDistributions={profitDistributions}
+              currentUser={currentUser}
+              onSavePartners={savePartners}
+              onSaveDistribution={saveProfitDistribution}
+              onDeleteDistribution={deleteProfitDistribution}
+              onConfirm={askConfirm}
+              onPrint={(data) => setPrintPayload({ type: "distribution", data })}
+            />
+          )}
           {view === "users" && isAdmin && (
             <UsersAdmin users={users} onSave={async (next) => { await persistUsers(next); showToast("تم حفظ المستخدمين"); }} onConfirm={askConfirm} />
           )}
@@ -1022,7 +1069,7 @@ export default function App() {
           )}
           {view === "backup" && isAdmin && (
             <BackupPage
-              data={{ users, products, sales, seq, settings, announcements, stockLogs, expenses }}
+              data={{ users, products, sales, seq, settings, announcements, stockLogs, expenses, partners, profitDistributions }}
               onRestore={async (next, mode) => {
                 if (mode === "replace") {
                   await persistUsers(next.users || users);
@@ -1033,6 +1080,8 @@ export default function App() {
                   await persistAnnouncements(next.announcements || announcements);
                   await persistStockLogs(next.stockLogs || stockLogs);
                   await persistExpenses(next.expenses || expenses);
+                  await persistPartners(next.partners || partners);
+                  await persistProfitDistributions(next.profitDistributions || profitDistributions);
                 } else {
                   const mergeById = (a, b) => {
                     const map = new Map(a.map((x) => [x.id, x]));
@@ -1047,6 +1096,8 @@ export default function App() {
                   await persistAnnouncements(mergeById(announcements, next.announcements));
                   await persistStockLogs(mergeById(stockLogs, next.stockLogs));
                   await persistExpenses(mergeById(expenses, next.expenses));
+                  await persistPartners(mergeById(partners, next.partners));
+                  await persistProfitDistributions(mergeById(profitDistributions, next.profitDistributions));
                 }
                 showToast("تمت استعادة البيانات بنجاح");
               }}
@@ -1995,6 +2046,10 @@ function Inventory({ products, isAdmin, onSave, onPrintLabels, stockLogs, onLogA
   const [adjustType, setAdjustType] = useState("gift");
   const [adjustQty, setAdjustQty] = useState(1);
   const [adjustNote, setAdjustNote] = useState("");
+  const [expandedId, setExpandedId] = useState(null);
+  const [search, setSearch] = useState("");
+  const [sortBy, setSortBy] = useState("name"); // name | stockAsc
+  const [logFilter, setLogFilter] = useState("all");
 
   const resetForm = () => { setForm({ name: "", price: "", cost: "", stock: "", minStock: "5" }); setEditingId(null); };
 
@@ -2008,7 +2063,7 @@ function Inventory({ products, isAdmin, onSave, onPrintLabels, stockLogs, onLogA
     resetForm();
   };
 
-  const startEdit = (p) => { setForm({ name: p.name, price: String(p.price), cost: String(p.cost || 0), stock: String(p.stock), minStock: String(p.minStock ?? 5) }); setEditingId(p.id); };
+  const startEdit = (p) => { setForm({ name: p.name, price: String(p.price), cost: String(p.cost || 0), stock: String(p.stock), minStock: String(p.minStock ?? 5) }); setEditingId(p.id); setExpandedId(null); };
 
   const submitAdjustment = (product) => {
     const q = Number(adjustQty);
@@ -2019,9 +2074,42 @@ function Inventory({ products, isAdmin, onSave, onPrintLabels, stockLogs, onLogA
     setAdjustNote("");
   };
 
+  const lowStockCount = products.filter((p) => p.stock <= (p.minStock ?? 5)).length;
+  const inventoryValueCost = products.reduce((a, p) => a + p.stock * (p.cost || 0), 0);
+  const inventoryValueRetail = products.reduce((a, p) => a + p.stock * p.price, 0);
+
+  let list = products;
+  if (search.trim()) {
+    const q = search.trim().toLowerCase();
+    list = list.filter((p) => p.name.toLowerCase().includes(q));
+  }
+  list = [...list].sort((a, b) => {
+    if (sortBy === "stockAsc") return a.stock - b.stock;
+    return a.name.localeCompare(b.name, "ar");
+  });
+
+  let logList = stockLogs;
+  if (logFilter !== "all") logList = logList.filter((l) => l.type === logFilter);
+
+  const stockBadge = (p) => {
+    const min = p.minStock ?? 5;
+    if (p.stock <= 0) return { label: "نفد المخزون", cls: "bg-[#FBEAEA] text-[#B23A3A]" };
+    if (p.stock <= min) return { label: "منخفض", cls: "bg-[#FBEAEA] text-[#B23A3A]" };
+    if (p.stock <= min * 2) return { label: "جيد", cls: "bg-[#FFF6E5] text-[#C97B3D]" };
+    return { label: "ممتاز", cls: "bg-[#EAF6EF] text-[#3F7D57]" };
+  };
+
   return (
     <div className="space-y-5">
       <h2 className="text-xl font-bold">المخزون والمنتجات</h2>
+
+      {/* Summary */}
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+        <StatCard label="عدد المنتجات" value={products.length} color="var(--accent-dark)" />
+        <StatCard label="منتجات بحاجة لتخزين" value={lowStockCount} color="#B23A3A" />
+        {isAdmin && <StatCard label="قيمة المخزون (تكلفة)" value={fmt(inventoryValueCost) + " د.ك"} color="var(--accent)" />}
+        {isAdmin && <StatCard label="قيمة المخزون (بيع)" value={fmt(inventoryValueRetail) + " د.ك"} color="#3F7D57" />}
+      </div>
 
       {isAdmin && (
         <Card className="p-4">
@@ -2042,109 +2130,148 @@ function Inventory({ products, isAdmin, onSave, onPrintLabels, stockLogs, onLogA
         </Card>
       )}
 
-      {products.length === 0 ? (
-        <Card className="p-8"><EmptyState text="لا توجد منتجات مضافة بعد" /></Card>
+      {/* Search & sort */}
+      <div className="flex flex-col sm:flex-row gap-2">
+        <div className="relative flex-1">
+          <Search size={16} className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--muted)]" />
+          <input className={inputCls + " pr-9"} placeholder="بحث باسم المنتج..." value={search} onChange={(e) => setSearch(e.target.value)} />
+        </div>
+        <select className={inputCls + " sm:w-56"} value={sortBy} onChange={(e) => setSortBy(e.target.value)}>
+          <option value="name">ترتيب: الاسم (أبجدي)</option>
+          <option value="stockAsc">ترتيب: الأقل مخزوناً أولاً</option>
+        </select>
+      </div>
+
+      {list.length === 0 ? (
+        <Card className="p-8"><EmptyState text={products.length === 0 ? "لا توجد منتجات مضافة بعد" : "لا توجد منتجات مطابقة للبحث"} /></Card>
       ) : (
         <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
-          {products.map((p) => (
-            <Card key={p.id} className="p-4 card-hover">
-              <div className="flex justify-between items-start">
-                <div>
-                  <p className="font-bold">{p.name}</p>
-                  <p className="text-xs text-[var(--muted)]">{fmt(p.price)} د.ك / وحدة</p>
-                  {isAdmin && <p className="text-xs text-[var(--muted)]">التكلفة: {fmt(p.cost || 0)} د.ك</p>}
-                </div>
-                {p.stock <= (p.minStock ?? 5) && <AlertTriangle size={16} className="text-[#B23A3A]" />}
-              </div>
-              <p className={`mt-2 text-sm font-bold ${p.stock <= (p.minStock ?? 5) ? "text-[#B23A3A]" : "text-[#3F7D57]"}`}>
-                الكمية المتبقية: {p.stock}
-              </p>
-
-              <div className="flex items-center gap-2 mt-3">
-                <input
-                  type="number"
-                  min="1"
-                  className="w-16 rounded-lg border border-[var(--border)] bg-[var(--input-bg)] px-2 py-1.5 text-xs text-center"
-                  value={labelQty[p.id] ?? 12}
-                  onChange={(e) => setLabelQty({ ...labelQty, [p.id]: Math.max(1, Number(e.target.value) || 1) })}
-                />
-                <Btn variant="ghost" className="flex-1 py-1.5 text-xs" onClick={() => onPrintLabels(p, labelQty[p.id] ?? 12)}>
-                  <Tag size={14} /> طباعة ملصقات وباركود
-                </Btn>
-              </div>
-
-              <button
-                onClick={() => { setAdjustingId(adjustingId === p.id ? null : p.id); setAdjustQty(1); setAdjustNote(""); setAdjustType("gift"); }}
-                className="w-full mt-2 text-xs font-semibold text-[var(--accent-dark)] bg-[var(--surface-3)] rounded-lg px-3 py-1.5 flex items-center justify-center gap-1.5"
-              >
-                <Gift size={14} /> تسجيل هدية / تالف
-              </button>
-
-              {adjustingId === p.id && (
-                <div className="mt-2 bg-[var(--surface-2)] rounded-xl p-3 space-y-2 fade-in">
-                  <div className="flex gap-2">
-                    <button
-                      onClick={() => setAdjustType("gift")}
-                      className={`flex-1 py-1.5 rounded-lg text-xs font-semibold flex items-center justify-center gap-1 transition ${adjustType === "gift" ? "bg-[var(--accent)] text-white" : "bg-[var(--surface)] text-[var(--muted)]"}`}
-                    >
-                      <Gift size={13} /> هدية
-                    </button>
-                    <button
-                      onClick={() => setAdjustType("tester")}
-                      className={`flex-1 py-1.5 rounded-lg text-xs font-semibold flex items-center justify-center gap-1 transition ${adjustType === "tester" ? "bg-[#3B6EA8] text-white" : "bg-[var(--surface)] text-[var(--muted)]"}`}
-                    >
-                      <Droplet size={13} /> تجربة
-                    </button>
-                    <button
-                      onClick={() => setAdjustType("damage")}
-                      className={`flex-1 py-1.5 rounded-lg text-xs font-semibold flex items-center justify-center gap-1 transition ${adjustType === "damage" ? "bg-[#B23A3A] text-white" : "bg-[var(--surface)] text-[var(--muted)]"}`}
-                    >
-                      <Ban size={13} /> تالف
-                    </button>
+          {list.map((p) => {
+            const badge = stockBadge(p);
+            const expanded = expandedId === p.id;
+            return (
+              <Card key={p.id} className="p-4 card-hover">
+                <div className="flex justify-between items-start gap-2">
+                  <div className="min-w-0">
+                    <p className="font-bold truncate">{p.name}</p>
+                    <p className="text-xs text-[var(--muted)]">{fmt(p.price)} د.ك / وحدة</p>
+                    {isAdmin && <p className="text-xs text-[var(--muted)]">التكلفة: {fmt(p.cost || 0)} د.ك</p>}
                   </div>
-                  <div className="flex gap-2">
-                    <input
-                      type="number"
-                      min="1"
-                      max={p.stock}
-                      className="w-16 rounded-lg border border-[var(--border)] bg-[var(--input-bg)] px-2 py-1.5 text-xs text-center"
-                      value={adjustQty}
-                      onChange={(e) => setAdjustQty(Math.max(1, Math.min(p.stock, Number(e.target.value) || 1)))}
-                    />
-                    <input
-                      className="flex-1 rounded-lg border border-[var(--border)] bg-[var(--input-bg)] px-2 py-1.5 text-xs"
-                      placeholder="سبب / ملاحظة (اختياري)"
-                      value={adjustNote}
-                      onChange={(e) => setAdjustNote(e.target.value)}
-                    />
-                  </div>
-                  <div className="flex gap-2">
-                    <Btn className="!py-1.5 flex-1 text-xs" onClick={() => submitAdjustment(p)}>
-                      <Check size={13} /> تأكيد الخصم من المخزون
-                    </Btn>
-                    <button onClick={() => setAdjustingId(null)} className="p-1.5 text-[var(--muted)]"><X size={16} /></button>
-                  </div>
+                  <span className={`text-[10px] font-bold px-2 py-1 rounded-full shrink-0 ${badge.cls}`}>{badge.label}</span>
                 </div>
-              )}
 
-              {isAdmin && (
-                <div className="flex gap-2 mt-2">
-                  <button onClick={() => startEdit(p)} className="text-xs font-semibold text-[var(--accent-dark)] bg-[var(--surface-3)] rounded-lg px-3 py-1.5">تعديل</button>
-                  <button onClick={() => onConfirm(`هل تريد حذف المنتج "${p.name}"؟ لا يمكن التراجع عن هذا الإجراء.`, () => onSave(products.filter((x) => x.id !== p.id)))} className="text-xs font-semibold text-[#B23A3A] bg-[#FBEAEA] rounded-lg px-3 py-1.5">حذف</button>
+                <div className="flex items-center justify-between mt-2">
+                  <p className={`text-sm font-bold ${p.stock <= (p.minStock ?? 5) ? "text-[#B23A3A]" : "text-[#3F7D57]"}`}>
+                    الكمية المتبقية: {p.stock}
+                  </p>
+                  {p.stock <= (p.minStock ?? 5) && <AlertTriangle size={16} className="text-[#B23A3A]" />}
                 </div>
-              )}
-            </Card>
-          ))}
+
+                <button
+                  onClick={() => setExpandedId(expanded ? null : p.id)}
+                  className="w-full mt-3 text-xs font-semibold text-[var(--accent-dark)] bg-[var(--surface-3)] rounded-lg px-3 py-1.5 flex items-center justify-center gap-1.5"
+                >
+                  {expanded ? "إخفاء الخيارات" : "خيارات إضافية"}
+                </button>
+
+                {expanded && (
+                  <div className="mt-2 space-y-2 fade-in">
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="number"
+                        min="1"
+                        className="w-16 rounded-lg border border-[var(--border)] bg-[var(--input-bg)] px-2 py-1.5 text-xs text-center"
+                        value={labelQty[p.id] ?? 12}
+                        onChange={(e) => setLabelQty({ ...labelQty, [p.id]: Math.max(1, Number(e.target.value) || 1) })}
+                      />
+                      <Btn variant="ghost" className="flex-1 py-1.5 text-xs" onClick={() => onPrintLabels(p, labelQty[p.id] ?? 12)}>
+                        <Tag size={14} /> طباعة ملصقات وباركود
+                      </Btn>
+                    </div>
+
+                    <button
+                      onClick={() => { setAdjustingId(adjustingId === p.id ? null : p.id); setAdjustQty(1); setAdjustNote(""); setAdjustType("gift"); }}
+                      className="w-full text-xs font-semibold text-[var(--accent-dark)] bg-[var(--surface-2)] rounded-lg px-3 py-1.5 flex items-center justify-center gap-1.5"
+                    >
+                      <Gift size={14} /> تسجيل هدية / تالف / تجربة
+                    </button>
+
+                    {adjustingId === p.id && (
+                      <div className="bg-[var(--surface-2)] rounded-xl p-3 space-y-2 fade-in">
+                        <div className="flex gap-2">
+                          <button
+                            onClick={() => setAdjustType("gift")}
+                            className={`flex-1 py-1.5 rounded-lg text-xs font-semibold flex items-center justify-center gap-1 transition ${adjustType === "gift" ? "bg-[var(--accent)] text-white" : "bg-[var(--surface)] text-[var(--muted)]"}`}
+                          >
+                            <Gift size={13} /> هدية
+                          </button>
+                          <button
+                            onClick={() => setAdjustType("tester")}
+                            className={`flex-1 py-1.5 rounded-lg text-xs font-semibold flex items-center justify-center gap-1 transition ${adjustType === "tester" ? "bg-[#3B6EA8] text-white" : "bg-[var(--surface)] text-[var(--muted)]"}`}
+                          >
+                            <Droplet size={13} /> تجربة
+                          </button>
+                          <button
+                            onClick={() => setAdjustType("damage")}
+                            className={`flex-1 py-1.5 rounded-lg text-xs font-semibold flex items-center justify-center gap-1 transition ${adjustType === "damage" ? "bg-[#B23A3A] text-white" : "bg-[var(--surface)] text-[var(--muted)]"}`}
+                          >
+                            <Ban size={13} /> تالف
+                          </button>
+                        </div>
+                        <div className="flex gap-2">
+                          <input
+                            type="number"
+                            min="1"
+                            max={p.stock}
+                            className="w-16 rounded-lg border border-[var(--border)] bg-[var(--input-bg)] px-2 py-1.5 text-xs text-center"
+                            value={adjustQty}
+                            onChange={(e) => setAdjustQty(Math.max(1, Math.min(p.stock, Number(e.target.value) || 1)))}
+                          />
+                          <input
+                            className="flex-1 rounded-lg border border-[var(--border)] bg-[var(--input-bg)] px-2 py-1.5 text-xs"
+                            placeholder="سبب / ملاحظة (اختياري)"
+                            value={adjustNote}
+                            onChange={(e) => setAdjustNote(e.target.value)}
+                          />
+                        </div>
+                        <div className="flex gap-2">
+                          <Btn className="!py-1.5 flex-1 text-xs" onClick={() => submitAdjustment(p)}>
+                            <Check size={13} /> تأكيد الخصم من المخزون
+                          </Btn>
+                          <button onClick={() => setAdjustingId(null)} className="p-1.5 text-[var(--muted)]"><X size={16} /></button>
+                        </div>
+                      </div>
+                    )}
+
+                    {isAdmin && (
+                      <div className="flex gap-2">
+                        <button onClick={() => startEdit(p)} className="flex-1 text-xs font-semibold text-[var(--accent-dark)] bg-[var(--surface-2)] rounded-lg px-3 py-1.5">تعديل</button>
+                        <button onClick={() => onConfirm(`هل تريد حذف المنتج "${p.name}"؟ لا يمكن التراجع عن هذا الإجراء.`, () => onSave(products.filter((x) => x.id !== p.id)))} className="flex-1 text-xs font-semibold text-[#B23A3A] bg-[#FBEAEA] rounded-lg px-3 py-1.5">حذف</button>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </Card>
+            );
+          })}
         </div>
       )}
 
       <div>
-        <h3 className="font-bold mb-3 flex items-center gap-2"><Gift size={18} /> سجل الهدايا والتالف</h3>
-        {stockLogs.length === 0 ? (
-          <Card className="p-6"><EmptyState text="لا توجد عمليات هدايا أو تالف مسجَّلة بعد" /></Card>
+        <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
+          <h3 className="font-bold flex items-center gap-2"><Gift size={18} /> سجل الهدايا والتالف والتجربة</h3>
+          <select className={inputCls + " w-44 !py-1.5 text-xs"} value={logFilter} onChange={(e) => setLogFilter(e.target.value)}>
+            <option value="all">كل الأنواع</option>
+            <option value="gift">هدايا</option>
+            <option value="tester">تجربة</option>
+            <option value="damage">تالف</option>
+          </select>
+        </div>
+        {logList.length === 0 ? (
+          <Card className="p-6"><EmptyState text="لا توجد عمليات مسجَّلة بعد" /></Card>
         ) : (
           <div className="space-y-2">
-            {stockLogs.map((l) => (
+            {logList.map((l) => (
               <Card key={l.id} className="p-3 flex items-center justify-between">
                 <div className="flex items-center gap-3">
                   <div className={`w-9 h-9 rounded-full flex items-center justify-center shrink-0 ${l.type === "gift" ? "bg-[var(--surface-3)] text-[var(--accent)]" : l.type === "tester" ? "bg-[#EAF1F8] text-[#3B6EA8]" : "bg-[#FBEAEA] text-[#B23A3A]"}`}>
@@ -2156,7 +2283,7 @@ function Inventory({ products, isAdmin, onSave, onPrintLabels, stockLogs, onLogA
                   </div>
                 </div>
                 {isAdmin && (
-                  <button onClick={() => onConfirm("هل تريد حذف هذا السجل؟", () => onDeleteLog(l.id))} className="p-1.5 rounded-lg text-[#B23A3A] hover:bg-[#FBEAEA] shrink-0"><Trash2 size={15} /></button>
+                  <button onClick={() => onConfirm("هل تريد حذف هذا السجل؟ سيتم إرجاع الكمية إلى المخزون تلقائياً.", () => onDeleteLog(l.id))} className="p-1.5 rounded-lg text-[#B23A3A] hover:bg-[#FBEAEA] shrink-0"><Trash2 size={15} /></button>
                 )}
               </Card>
             ))}
@@ -2636,6 +2763,200 @@ function AccountingPage({ sales, products, expenses, stockLogs }) {
   );
 }
 
+/* ---------------------------------- Partners Profit Calculation ---------------------------------- */
+
+function CapitalPartnersPage({
+  sales, products, expenses, stockLogs, partners, profitDistributions,
+  currentUser, onSavePartners, onSaveDistribution, onDeleteDistribution, onConfirm, onPrint,
+}) {
+  const [partnerCount, setPartnerCount] = useState(partners.length || 2);
+  const [localPartners, setLocalPartners] = useState(
+    partners.length ? partners : [{ id: uid(), name: "الشريك الأول", percent: 50 }, { id: uid(), name: "الشريك الثاني", percent: 50 }]
+  );
+  const [result, setResult] = useState(null);
+
+  const costById = useMemo(() => {
+    const m = new Map();
+    products.forEach((p) => m.set(p.id, p.cost || 0));
+    return m;
+  }, [products]);
+
+  // ---- Partner setup ----
+  const totalPercent = localPartners.reduce((a, p) => a + Number(p.percent || 0), 0);
+  const percentValid = Math.abs(totalPercent - 100) < 0.01;
+
+  const generateEqualPartners = () => {
+    const n = Math.max(1, Math.min(20, Number(partnerCount) || 1));
+    const base = Math.floor((100 / n) * 100) / 100;
+    const list = Array.from({ length: n }).map((_, i) => ({ id: uid(), name: `الشريك ${i + 1}`, percent: base }));
+    const sum = list.reduce((a, p) => a + p.percent, 0);
+    list[list.length - 1].percent = Math.round((list[list.length - 1].percent + (100 - sum)) * 100) / 100;
+    setLocalPartners(list);
+  };
+
+  const updatePartner = (id, field, value) => {
+    setLocalPartners((list) => list.map((p) => (p.id === id ? { ...p, [field]: value } : p)));
+  };
+  const removePartner = (id) => setLocalPartners((list) => list.filter((p) => p.id !== id));
+  const addPartner = () => setLocalPartners((list) => [...list, { id: uid(), name: `شريك ${list.length + 1}`, percent: 0 }]);
+
+  // ---- Profit calculation — grounded directly in the same figures shown on
+  // the Dashboard/Statistics pages (total collected across all sales), so
+  // there's never a mismatch between what the admin sees there and here. ----
+  const totalCollected = sales.reduce((a, s) => a + s.collected, 0);
+
+  const grossProfit = sales.reduce((sum, s) => {
+    if (!s.total) return sum;
+    const saleCost = s.items.reduce((a, i) => a + (costById.get(i.productId) || 0) * i.qty, 0);
+    const costRatio = saleCost / s.total;
+    return sum + s.collected * (1 - costRatio);
+  }, 0);
+
+  const totalExpenses = expenses.reduce((a, e) => a + e.amount, 0);
+  const totalShrinkage = stockLogs.reduce((a, l) => a + (costById.get(l.productId) || 0) * l.qty, 0);
+  const netProfit = grossProfit - totalExpenses - totalShrinkage;
+
+  const calculate = () => {
+    if (!percentValid) return;
+    const partnersBreakdown = localPartners.map((p) => ({
+      id: p.id,
+      name: p.name,
+      percent: Number(p.percent),
+      amount: netProfit * (Number(p.percent) / 100),
+    }));
+    setResult({
+      id: uid(),
+      periodLabel: `لقطة بتاريخ ${dateLabel(todayISO())}`,
+      collectedCash: totalCollected,
+      grossProfit,
+      periodExpenses: totalExpenses,
+      periodShrinkage: totalShrinkage,
+      netProfit,
+      partners: partnersBreakdown,
+      date: todayISO(),
+      byUserName: currentUser.name,
+    });
+  };
+
+  return (
+    <div className="space-y-5">
+      <h2 className="text-xl font-bold flex items-center gap-2"><Landmark size={20} /> حساب أرباح الشركاء</h2>
+      <p className="text-xs text-[var(--muted)] -mt-3">تحديد الشركاء ونسبهم، واحتساب حصة كل شريك من صافي الربح المبني مباشرةً على المبلغ المحصَّل الفعلي (نفس الرقم الظاهر بالرئيسية والإحصائيات).</p>
+
+      {/* Partners */}
+      <Card className="p-4">
+        <h3 className="font-bold mb-3 flex items-center gap-2"><Users2 size={18} /> الشركاء ونسب الأرباح</h3>
+        <div className="flex gap-2 items-end mb-4">
+          <div className="w-28">
+            <Field label="عدد الشركاء">
+              <input type="number" min="1" max="20" className={inputCls} value={partnerCount} onChange={(e) => setPartnerCount(e.target.value)} />
+            </Field>
+          </div>
+          <Btn variant="outline" onClick={generateEqualPartners}>توليد بالتساوي</Btn>
+          <Btn variant="ghost" onClick={addPartner}><Plus size={14} /> إضافة شريك</Btn>
+        </div>
+
+        <div className="space-y-2">
+          {localPartners.map((p) => (
+            <div key={p.id} className="flex gap-2 items-center">
+              <input className={inputCls + " flex-1"} value={p.name} onChange={(e) => updatePartner(p.id, "name", e.target.value)} />
+              <div className="relative w-24">
+                <input type="number" min="0" max="100" step="0.01" className={inputCls + " pl-6"} value={p.percent} onChange={(e) => updatePartner(p.id, "percent", e.target.value)} />
+                <Percent size={13} className="absolute left-2 top-1/2 -translate-y-1/2 text-[var(--muted)]" />
+              </div>
+              <button onClick={() => removePartner(p.id)} className="p-2 text-[#B23A3A]"><Trash2 size={16} /></button>
+            </div>
+          ))}
+        </div>
+
+        <div className={`mt-3 text-xs font-semibold flex items-center gap-1.5 ${percentValid ? "text-[#3F7D57]" : "text-[#B23A3A]"}`}>
+          {percentValid ? <Check size={14} /> : <AlertTriangle size={14} />}
+          إجمالي النسب: {totalPercent.toFixed(2)}% {percentValid ? "✓ صحيح" : "— يجب أن يساوي 100%"}
+        </div>
+
+        <Btn className="w-full mt-3" onClick={() => onSavePartners(localPartners)} disabled={!percentValid}>
+          <Save size={16} /> حفظ بيانات الشركاء
+        </Btn>
+      </Card>
+
+      {/* Profit calculator */}
+      <Card className="p-4">
+        <h3 className="font-bold mb-3 flex items-center gap-2"><HandCoins size={18} /> حساب أرباح الشركاء من المبلغ المحصَّل</h3>
+
+        <div className="grid grid-cols-2 gap-2 text-sm mb-3">
+          <div className="bg-[var(--surface-2)] rounded-xl p-2.5">
+            <p className="text-[10px] text-[var(--muted)]">إجمالي المبلغ المحصَّل</p>
+            <p className="font-bold">{fmt(totalCollected)} د.ك</p>
+          </div>
+          <div className="bg-[var(--surface-2)] rounded-xl p-2.5">
+            <p className="text-[10px] text-[var(--muted)]">الربح الإجمالي (بعد تكلفة البضاعة)</p>
+            <p className="font-bold">{fmt(grossProfit)} د.ك</p>
+          </div>
+          <div className="bg-[var(--surface-2)] rounded-xl p-2.5">
+            <p className="text-[10px] text-[var(--muted)]">إجمالي المصروفات</p>
+            <p className="font-bold text-[#B23A3A]">{fmt(totalExpenses)} د.ك</p>
+          </div>
+          <div className="bg-[var(--surface-2)] rounded-xl p-2.5">
+            <p className="text-[10px] text-[var(--muted)]">إجمالي الهدر (هدايا/تالف/تجربة)</p>
+            <p className="font-bold text-[#B23A3A]">{fmt(totalShrinkage)} د.ك</p>
+          </div>
+        </div>
+
+        <div className="bg-[var(--surface-3)] rounded-xl p-3 text-center mb-3">
+          <p className="text-[11px] text-[var(--muted)]">صافي الربح القابل للتوزيع</p>
+          <p className={`text-xl font-extrabold ${netProfit >= 0 ? "text-[#3F7D57]" : "text-[#B23A3A]"}`}>{fmt(netProfit)} د.ك</p>
+        </div>
+
+        <Btn className="w-full" onClick={calculate} disabled={!percentValid}>
+          <Calculator size={16} /> احتساب أرباح كل شريك
+        </Btn>
+        {!percentValid && <p className="text-[11px] text-[#B23A3A] mt-2">أكمل نسب الشركاء بحيث تساوي 100% قبل الاحتساب</p>}
+
+        {result && (
+          <div className="mt-4 pt-4 border-t border-[var(--border)] space-y-1.5 fade-in">
+            {result.partners.map((p) => (
+              <div key={p.id} className="flex justify-between items-center text-sm bg-[var(--surface-2)] rounded-lg px-3 py-2">
+                <span className="font-semibold">{p.name} <span className="text-[var(--muted)] font-normal">({p.percent}%)</span></span>
+                <span className="font-bold text-[var(--accent)]">{fmt(p.amount)} د.ك</span>
+              </div>
+            ))}
+
+            <div className="flex gap-2 pt-2">
+              <Btn className="flex-1" onClick={() => onSaveDistribution(result)}><Save size={16} /> حفظ بالسجل</Btn>
+              <Btn variant="outline" onClick={() => onPrint(result)}><Printer size={16} /> طباعة</Btn>
+            </div>
+          </div>
+        )}
+      </Card>
+
+      {/* History */}
+      <div>
+        <h3 className="font-bold mb-3 flex items-center gap-2"><CalendarRange size={18} /> سجل حسابات الأرباح السابقة</h3>
+        {profitDistributions.length === 0 ? (
+          <Card className="p-6"><EmptyState text="لا توجد حسابات محفوظة بعد" /></Card>
+        ) : (
+          <div className="space-y-2">
+            {profitDistributions.map((d) => (
+              <Card key={d.id} className="p-3 card-hover">
+                <div className="flex items-center justify-between">
+                  <div>
+                    <p className="text-sm font-semibold">{d.periodLabel}</p>
+                    <p className="text-[11px] text-[var(--muted)]">صافي الربح: {fmt(d.netProfit)} د.ك · بواسطة {d.byUserName} · {dateLabel(d.date)}</p>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <button onClick={() => onPrint(d)} className="p-1.5 rounded-lg text-[var(--accent-dark)] hover:bg-[var(--surface-3)]"><Printer size={15} /></button>
+                    <button onClick={() => onConfirm("هل تريد حذف هذا السجل؟", () => onDeleteDistribution(d.id))} className="p-1.5 rounded-lg text-[#B23A3A] hover:bg-[#FBEAEA]"><Trash2 size={15} /></button>
+                  </div>
+                </div>
+              </Card>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 function SettingsPage({ settings, onSave }) {
   const [form, setForm] = useState(settings);
   const fileRef = useRef(null);
@@ -3091,8 +3412,10 @@ function PrintArea({ payload, settings, onClose }) {
       <div className="print-sheet" dir="rtl" style={{ fontFamily: "'Tajawal', sans-serif", color: "#2B211A" }}>
         {payload.type === "invoice" ? (
           <InvoiceDoc sale={payload.data} settings={settings} />
-        ) : (
+        ) : payload.type === "record" ? (
           <RecordDoc sellerName={payload.data.sellerName} list={payload.data.list} settings={settings} />
+        ) : (
+          <DistributionDoc data={payload.data} settings={settings} />
         )}
       </div>
     </div>
@@ -3230,6 +3553,49 @@ function RecordDoc({ sellerName, list, settings }) {
 
 const thStyle = { textAlign: "right", padding: "8px 10px", borderBottom: "2px solid #E3D6BE", fontWeight: 700 };
 const tdStyle = { textAlign: "right", padding: "8px 10px", borderBottom: "1px solid #F0E6D0" };
+
+function DistributionDoc({ data, settings }) {
+  return (
+    <div>
+      <DocHeader settings={settings} />
+      <h2 style={{ fontSize: 18, fontWeight: 800, marginBottom: 4 }}>تقرير حساب أرباح الشركاء</h2>
+      <p style={{ fontSize: 12, color: "#8A7B6C", marginBottom: 16 }}>{data.periodLabel}</p>
+
+      <div style={{ background: "#F7F1E6", borderRadius: 10, padding: "12px 16px", marginBottom: 16 }}>
+        <TotalRow label="إجمالي المبلغ المحصَّل" value={data.collectedCash} />
+        <TotalRow label="الربح الإجمالي (بعد خصم تكلفة البضاعة)" value={data.grossProfit} />
+        <TotalRow label="إجمالي المصروفات" value={-data.periodExpenses} color="#B23A3A" />
+        <TotalRow label="الهدر (هدايا / تالف / تجربة)" value={-data.periodShrinkage} color="#B23A3A" />
+        <div style={{ borderTop: "2px solid #E3D6BE", marginTop: 6, paddingTop: 6 }}>
+          <TotalRow label="صافي الربح القابل للتوزيع" value={data.netProfit} bold color={data.netProfit >= 0 ? "#3F7D57" : "#B23A3A"} />
+        </div>
+      </div>
+
+      <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+        <thead>
+          <tr style={{ background: "#F7F1E6" }}>
+            <th style={thStyle}>الشريك</th>
+            <th style={thStyle}>النسبة</th>
+            <th style={thStyle}>المبلغ المستحق</th>
+          </tr>
+        </thead>
+        <tbody>
+          {data.partners.map((p) => (
+            <tr key={p.id}>
+              <td style={tdStyle}>{p.name}</td>
+              <td style={tdStyle}>{p.percent}%</td>
+              <td style={tdStyle}>{fmt(p.amount)} د.ك</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+
+      <p style={{ marginTop: 40, fontSize: 11, color: "#8A7B6C", textAlign: "center" }}>
+        تقرير داخلي لتوزيع الأرباح — {settings.companyName || "عطورنا"}
+      </p>
+    </div>
+  );
+}
 
 function TotalRow({ label, value, bold, color }) {
   return (
