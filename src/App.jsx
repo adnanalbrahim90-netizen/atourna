@@ -5,7 +5,7 @@ import {
   Menu, Save, Image as ImageIcon, ShoppingCart, Home, AlertTriangle, Eye, EyeOff,
   Sun, Moon, Pencil, Wallet, Tag, MessageSquare, Megaphone, Gift, Ban,
   Wallet2, Calculator, Percent, Droplet, TrendingUp, TrendingDown, ShieldCheck, Bell,
-  Landmark, HandCoins, CalendarRange, Users2, KeyRound
+  Landmark, HandCoins, CalendarRange, Users2
 } from "lucide-react";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
@@ -136,18 +136,17 @@ function PerfumeMark({ size = 40 }) {
 
 /* ---------------------------------- shared UI atoms ---------------------------------- */
 
-function Btn({ children, variant = "primary", className = "", style, ...props }) {
+function Btn({ children, variant = "primary", className = "", ...props }) {
   const base = "inline-flex items-center justify-center gap-1.5 rounded-xl px-4 py-2.5 text-sm font-semibold transition active:scale-[0.98] disabled:opacity-50 disabled:pointer-events-none";
   const variants = {
-    primary: "text-white shadow-sm hover:brightness-105",
+    primary: "bg-[var(--accent)] text-white hover:brightness-95 shadow-sm",
     dark: "bg-[var(--accent-dark)] text-white hover:brightness-90 shadow-sm",
     ghost: "bg-[var(--surface-3)] text-[var(--accent-dark)] hover:bg-[var(--border)]",
     outline: "border border-[var(--border)] text-[var(--text)] hover:bg-[var(--surface-2)]",
     danger: "bg-[#B23A3A] text-white hover:bg-[#9c3131]",
   };
-  const primaryStyle = variant === "primary" ? { background: "linear-gradient(135deg, var(--accent), var(--accent-dark))", ...style } : style;
   return (
-    <button className={`${base} ${variants[variant]} ${className}`} style={primaryStyle} {...props}>
+    <button className={`${base} ${variants[variant]} ${className}`} {...props}>
       {children}
     </button>
   );
@@ -268,11 +267,10 @@ function LoginScreen({ users, onLogin, onRecover, onLegacyUpgrade }) {
 }
 
 function RecoverModal({ users, onRecover, onClose }) {
-  const [step, setStep] = useState(1); // 1: username, 2: security question, 3: new password, 4: done
+  const [step, setStep] = useState(1); // 1: enter username, 2: answer question, 3: set new password
   const [username, setUsername] = useState("");
   const [answer, setAnswer] = useState("");
   const [newPassword, setNewPassword] = useState("");
-  const [confirmPassword, setConfirmPassword] = useState("");
   const [err, setErr] = useState("");
   const [foundUser, setFoundUser] = useState(null);
 
@@ -292,10 +290,9 @@ function RecoverModal({ users, onRecover, onClose }) {
   };
 
   const checkAnswer = async () => {
-    if (!answer.trim()) return;
     const hashedAnswer = await hashPassword(answer.trim().toLowerCase());
     if (hashedAnswer !== foundUser.securityAnswer) {
-      setErr("الإجابة غير صحيحة، حاول مرة أخرى");
+      setErr("الإجابة غير صحيحة");
       return;
     }
     setErr("");
@@ -303,92 +300,58 @@ function RecoverModal({ users, onRecover, onClose }) {
   };
 
   const resetPassword = async () => {
-    if (!newPassword.trim() || newPassword.length < 4) {
-      setErr("كلمة المرور يجب أن تكون 4 أحرف على الأقل");
-      return;
-    }
-    if (newPassword !== confirmPassword) {
-      setErr("كلمتا المرور غير متطابقتين");
-      return;
-    }
+    if (!newPassword.trim()) return;
     const hashed = await hashPassword(newPassword);
     const ok = await onRecover(foundUser.username, hashed);
     if (ok) {
-      setErr("");
       setStep(4);
     } else {
       setErr("تعذّر تحديث كلمة المرور، حاول مرة أخرى");
     }
   };
 
-  const STEP_TITLES = ["", "تحديد الحساب", "التحقق من الهوية", "كلمة مرور جديدة", "تم بنجاح"];
-
   return (
     <div className="fixed inset-0 z-[9998] flex items-center justify-center bg-black/50 p-4 announce-backdrop" dir="rtl">
       <div className="bg-[var(--surface)] rounded-2xl w-full max-w-sm p-6 announce-pop">
-        <div className="flex items-center justify-between mb-1">
-          <h3 className="text-lg font-bold flex items-center gap-2"><KeyRound size={18} className="text-[var(--accent)]" /> استعادة الحساب</h3>
+        <div className="flex items-center justify-between mb-4">
+          <h3 className="text-lg font-bold">استعادة الحساب</h3>
           <button onClick={onClose} className="p-1 text-[var(--muted)]"><X size={20} /></button>
         </div>
 
-        {step < 4 && (
-          <div className="flex items-center gap-1.5 my-4">
-            {[1, 2, 3].map((n) => (
-              <div key={n} className="flex-1 flex items-center gap-1.5">
-                <div className={`w-6 h-6 rounded-full flex items-center justify-center text-[11px] font-bold shrink-0 transition ${
-                  step > n ? "bg-[#3F7D57] text-white" : step === n ? "bg-[var(--accent)] text-white" : "bg-[var(--surface-3)] text-[var(--muted)]"
-                }`}>
-                  {step > n ? <Check size={12} /> : n}
-                </div>
-                {n < 3 && <div className={`flex-1 h-1 rounded-full ${step > n ? "bg-[#3F7D57]" : "bg-[var(--surface-3)]"}`} />}
-              </div>
-            ))}
-          </div>
-        )}
-        {step < 4 && <p className="text-[11px] font-semibold text-[var(--muted)] mb-3">الخطوة {step} من 3 — {STEP_TITLES[step]}</p>}
-
         {step === 1 && (
           <div className="space-y-3">
-            <p className="text-xs text-[var(--muted)]">الاسترجاع متاح فقط لحساب المدير الأساسي للنظام. أدخل اسم المستخدم الخاص به للمتابعة.</p>
-            <Field label="اسم المستخدم"><input className={inputCls} value={username} onChange={(e) => setUsername(e.target.value)} onKeyDown={(e) => e.key === "Enter" && checkUsername()} autoFocus /></Field>
-            {err && <p className="text-xs text-[#B23A3A] flex items-center gap-1.5"><AlertTriangle size={13} /> {err}</p>}
+            <p className="text-xs text-[var(--muted)]">الاسترجاع متاح فقط لحساب المدير الأساسي للنظام. أدخل اسم المستخدم للمتابعة.</p>
+            <Field label="اسم المستخدم"><input className={inputCls} value={username} onChange={(e) => setUsername(e.target.value)} autoFocus /></Field>
+            {err && <p className="text-xs text-[#B23A3A]">{err}</p>}
             <Btn className="w-full" onClick={checkUsername}>التالي</Btn>
           </div>
         )}
 
         {step === 2 && (
           <div className="space-y-3">
-            <p className="text-xs text-[var(--muted)]">أجب على سؤال الأمان المسجَّل لهذا الحساب للتحقق من هويتك.</p>
             <Field label={foundUser.securityQuestion}>
-              <input className={inputCls} value={answer} onChange={(e) => setAnswer(e.target.value)} onKeyDown={(e) => e.key === "Enter" && checkAnswer()} autoFocus />
+              <input className={inputCls} value={answer} onChange={(e) => setAnswer(e.target.value)} autoFocus />
             </Field>
-            {err && <p className="text-xs text-[#B23A3A] flex items-center gap-1.5"><AlertTriangle size={13} /> {err}</p>}
+            {err && <p className="text-xs text-[#B23A3A]">{err}</p>}
             <Btn className="w-full" onClick={checkAnswer}>تأكيد الإجابة</Btn>
           </div>
         )}
 
         {step === 3 && (
           <div className="space-y-3">
-            <p className="text-xs text-[var(--muted)]">أدخل كلمة مرور جديدة وسهلة التذكر — ستُستخدم من الآن فصاعداً لتسجيل الدخول.</p>
             <Field label="كلمة المرور الجديدة">
               <input type="text" className={inputCls} value={newPassword} onChange={(e) => setNewPassword(e.target.value)} autoFocus />
             </Field>
-            <Field label="تأكيد كلمة المرور">
-              <input type="text" className={inputCls} value={confirmPassword} onChange={(e) => setConfirmPassword(e.target.value)} onKeyDown={(e) => e.key === "Enter" && resetPassword()} />
-            </Field>
-            {err && <p className="text-xs text-[#B23A3A] flex items-center gap-1.5"><AlertTriangle size={13} /> {err}</p>}
+            {err && <p className="text-xs text-[#B23A3A]">{err}</p>}
             <Btn className="w-full" onClick={resetPassword}>حفظ كلمة المرور الجديدة</Btn>
           </div>
         )}
 
         {step === 4 && (
-          <div className="space-y-3 text-center py-2">
-            <div className="w-14 h-14 rounded-full bg-[#EAF6EF] flex items-center justify-center mx-auto">
-              <Check size={28} className="text-[#3F7D57]" />
-            </div>
-            <p className="text-sm font-semibold">تم تحديث كلمة المرور بنجاح ✅</p>
-            <p className="text-xs text-[var(--muted)]">يمكنك الآن تسجيل الدخول بكلمة المرور الجديدة.</p>
-            <Btn className="w-full" onClick={onClose}>تسجيل الدخول الآن</Btn>
+          <div className="space-y-3 text-center">
+            <Check size={32} className="mx-auto text-[#3F7D57]" />
+            <p className="text-sm">تم تحديث كلمة المرور بنجاح. يمكنك الآن تسجيل الدخول.</p>
+            <Btn className="w-full" onClick={onClose}>حسناً</Btn>
           </div>
         )}
       </div>
@@ -667,12 +630,10 @@ export default function App() {
     };
     await persistAnnouncements([announcement, ...announcements]);
     markAnnouncementSeen(currentUser.id, announcement.id); // don't pop up your own broadcast to yourself
-    showToast("تم إرسال التعميم بنجاح لجميع المستخدمين");
   };
 
   const deleteAnnouncement = async (id) => {
     await persistAnnouncements(announcements.filter((a) => a.id !== id));
-    showToast("تم حذف التعميم");
   };
 
   // Records a gifted, damaged, or opened-for-testing unit against a product
@@ -724,7 +685,6 @@ export default function App() {
 
   const deleteExpense = async (id) => {
     await persistExpenses(expenses.filter((e) => e.id !== id));
-    showToast("تم حذف المصروف");
   };
 
   const persistPartners = async (next) => { setPartners(next); await storeSet("perfume_partners", next); };
@@ -742,7 +702,6 @@ export default function App() {
 
   const deleteProfitDistribution = async (id) => {
     await persistProfitDistributions(profitDistributions.filter((d) => d.id !== id));
-    showToast("تم حذف سجل توزيع الأرباح");
   };
 
   const updateSale = async (id, updates) => {
@@ -762,7 +721,6 @@ export default function App() {
     };
     const comments = [...(sale.comments || []), comment];
     await updateSale(id, { comments });
-    showToast("تمت إضافة الملاحظة على الفاتورة");
   };
 
   const deleteSaleComment = async (saleId, commentId) => {
@@ -770,7 +728,6 @@ export default function App() {
     if (!sale) return;
     const comments = (sale.comments || []).filter((c) => c.id !== commentId);
     await updateSale(saleId, { comments });
-    showToast("تم حذف الملاحظة");
   };
 
   // Full invoice edit (admin only): replaces items/collected and reconciles stock deltas.
@@ -820,15 +777,11 @@ export default function App() {
   if (loading) {
     return (
       <div className="min-h-screen bg-[var(--bg)] flex items-center justify-center" dir="rtl">
-        <div className="flex flex-col items-center gap-4 fade-in">
-          <div className="loader-orbit">
-            <div className="loader-orbit-rotator">
-              <div className="loader-orbit-icon">
-                <PerfumeMark size={30} />
-              </div>
-            </div>
-            <p className="loader-center-text">جارِ<br />التحميل</p>
+        <div className="flex flex-col items-center gap-3 fade-in">
+          <div style={{ animation: "popIn .5s ease both" }}>
+            <PerfumeMark size={48} />
           </div>
+          <p className="text-[var(--muted)] text-sm">جارِ التحميل...</p>
         </div>
       </div>
     );
@@ -926,8 +879,7 @@ export default function App() {
       )}
 
       {/* Top bar */}
-      <header className="no-print sticky top-0 z-30 bg-[var(--bg)]/95 backdrop-blur border-b border-[var(--border)]" style={{ boxShadow: "0 1px 0 0 var(--border), 0 2px 10px -6px rgba(0,0,0,0.15)" }}>
-        <div className="h-[3px] w-full" style={{ background: "linear-gradient(90deg, var(--accent) 0%, var(--accent-dark) 50%, var(--accent) 100%)" }} />
+      <header className="no-print sticky top-0 z-30 bg-[var(--bg)]/95 backdrop-blur border-b border-[var(--border)]">
         <div className="max-w-6xl mx-auto flex items-center justify-between px-4 py-3">
           <div className="flex items-center gap-2">
             <button className="md:hidden p-2 -mr-2 text-[var(--accent-dark)]" onClick={() => setMobileNavOpen(true)}>
@@ -1037,37 +989,8 @@ export default function App() {
               currentUser={currentUser}
               isAdmin={isAdmin}
               onDelete={async (id) => {
-                const sale = sales.find((s) => s.id === id);
-                if (!sale) return;
-
-                // 1) Give every sold unit back to inventory stock.
-                const updatedProducts = products.map((p) => {
-                  const returned = sale.items
-                    .filter((i) => i.productId === p.id)
-                    .reduce((a, i) => a + i.qty, 0);
-                  return returned ? { ...p, stock: p.stock + returned } : p;
-                });
-                await persistProducts(updatedProducts);
-
-                // 2) Reclaim the invoice number so the sequence isn't left
-                // with a "lost" number — but only when this was the very
-                // last invoice issued, otherwise reusing it could collide
-                // with numbers already given to newer invoices.
-                const match = /INV-(\d+)/.exec(sale.invoiceNo || "");
-                const saleNum = match ? Number(match[1]) : null;
-                let reclaimedNumber = false;
-                if (saleNum && seq.count === saleNum) {
-                  await persistSeq({ ...seq, count: seq.count - 1 });
-                  reclaimedNumber = true;
-                }
-
                 await persistSales(sales.filter((s) => s.id !== id));
-
-                const stockNote = sale.items.length
-                  ? ` وأُعيدت كمية ${sale.items.reduce((a, i) => a + i.qty, 0)} قطعة إلى المخزون`
-                  : "";
-                const seqNote = reclaimedNumber ? ` وأُعيد الرقم ${sale.invoiceNo} إلى التسلسل ليُستخدم للفاتورة القادمة` : "";
-                showToast(`تم حذف الفاتورة ${sale.invoiceNo}${stockNote}${seqNote}`);
+                showToast("تم حذف السجل");
               }}
               onPrintInvoice={(sale) => setPrintPayload({ type: "invoice", data: sale })}
               onPrintRecord={(sellerName, list) => setPrintPayload({ type: "record", data: { sellerName, list } })}
@@ -1139,7 +1062,7 @@ export default function App() {
             />
           )}
           {view === "users" && isAdmin && (
-            <UsersAdmin users={users} onSave={async (next) => { await persistUsers(next); showToast("تم حفظ بيانات المستخدمين بنجاح"); }} onConfirm={askConfirm} currentUser={currentUser} />
+            <UsersAdmin users={users} onSave={async (next) => { await persistUsers(next); showToast("تم حفظ المستخدمين"); }} onConfirm={askConfirm} />
           )}
           {view === "settings" && isAdmin && (
             <SettingsPage settings={settings} onSave={async (next) => { await persistSettings(next); showToast("تم حفظ الإعدادات"); }} />
@@ -1222,9 +1145,8 @@ function NavBtn({ item, active, onClick }) {
     <button
       onClick={onClick}
       className={`flex items-center gap-2.5 px-3 py-2.5 rounded-xl text-sm font-semibold text-right transition ${
-        active ? "text-white shadow-sm" : "text-[var(--text)] hover:bg-[var(--surface-3)]"
+        active ? "bg-[var(--accent-dark)] text-white" : "text-[var(--text)] hover:bg-[var(--surface-3)]"
       }`}
-      style={active ? { background: "linear-gradient(135deg, var(--accent-dark), var(--accent))" } : undefined}
     >
       <Icon size={18} />
       {item.label}
@@ -1397,13 +1319,6 @@ function GlobalStyle() {
         100% { background-position: 200px 0; }
       }
       @keyframes spin { to { transform: rotate(360deg); } }
-      @keyframes orbitSpin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
-      @keyframes orbitCounterSpin { from { transform: translateX(-50%) rotate(0deg); } to { transform: translateX(-50%) rotate(-360deg); } }
-
-      .loader-orbit { position: relative; width: 112px; height: 112px; display: flex; align-items: center; justify-content: center; }
-      .loader-orbit-rotator { position: absolute; inset: 0; animation: orbitSpin 2.4s linear infinite; }
-      .loader-orbit-icon { position: absolute; top: 2px; left: 50%; transform: translateX(-50%); animation: orbitCounterSpin 2.4s linear infinite; filter: drop-shadow(0 2px 6px rgba(184,137,74,0.35)); }
-      .loader-center-text { position: relative; z-index: 2; font-size: 13px; font-weight: 800; color: var(--accent-dark); text-align: center; line-height: 1.3; }
 
       .fade-in { animation: fadeInUp .28s ease both; }
       .view-transition { animation: fadeInUp .22s ease both; }
@@ -1451,10 +1366,10 @@ function Dashboard({ sales, products, currentUser, setView }) {
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <StatCard label="عدد الفواتير" value={mySales.length} color="var(--accent-dark)" icon={Receipt} />
-        <StatCard label="إجمالي المبيعات" value={fmt(totalRevenue) + " د.ك"} color="var(--accent)" icon={TrendingUp} />
-        <StatCard label="المحصل" value={fmt(totalCollected) + " د.ك"} color="#3F7D57" icon={Wallet} />
-        <StatCard label="المتبقي" value={fmt(totalRemaining) + " د.ك"} color="#B23A3A" icon={AlertTriangle} />
+        <StatCard label="عدد الفواتير" value={mySales.length} color="var(--accent-dark)" />
+        <StatCard label="إجمالي المبيعات" value={fmt(totalRevenue) + " د.ك"} color="var(--accent)" />
+        <StatCard label="المحصل" value={fmt(totalCollected) + " د.ك"} color="#3F7D57" />
+        <StatCard label="المتبقي" value={fmt(totalRemaining) + " د.ك"} color="#B23A3A" />
       </div>
 
       <div className="grid md:grid-cols-2 gap-4">
@@ -1500,20 +1415,11 @@ function Dashboard({ sales, products, currentUser, setView }) {
   );
 }
 
-function StatCard({ label, value, color, icon: Icon }) {
+function StatCard({ label, value, color }) {
   return (
     <Card className="p-4 card-hover">
-      <div className="flex items-center justify-between gap-2">
-        <div className="min-w-0">
-          <p className="text-xs text-[var(--muted)] mb-1 truncate">{label}</p>
-          <p className="text-lg font-extrabold truncate" style={{ color }}>{value}</p>
-        </div>
-        {Icon && (
-          <div className="w-9 h-9 rounded-full flex items-center justify-center shrink-0" style={{ background: `color-mix(in srgb, ${color} 16%, transparent)` }}>
-            <Icon size={16} style={{ color }} />
-          </div>
-        )}
-      </div>
+      <p className="text-xs text-[var(--muted)] mb-1">{label}</p>
+      <p className="text-lg font-extrabold" style={{ color }}>{value}</p>
     </Card>
   );
 }
@@ -1833,7 +1739,7 @@ function SalesRecords({ sales, users, currentUser, isAdmin, onDelete, onPrintInv
                   {isAdmin && (
                     <>
                       <button onClick={() => onEditSale(s)} className="p-2.5 rounded-xl bg-[var(--surface-3)] text-[var(--accent-dark)]"><Pencil size={16} /></button>
-                      <button onClick={() => onConfirm(`هل تريد حذف الفاتورة ${s.invoiceNo}؟ سيتم إرجاع كمية المنتجات إلى المخزون تلقائياً. لا يمكن التراجع عن هذا الإجراء.`, () => onDelete(s.id))} className="p-2.5 rounded-xl bg-[#FBEAEA] text-[#B23A3A]"><Trash2 size={16} /></button>
+                      <button onClick={() => onConfirm(`هل تريد حذف الفاتورة ${s.invoiceNo}؟ لا يمكن التراجع عن هذا الإجراء.`, () => onDelete(s.id))} className="p-2.5 rounded-xl bg-[#FBEAEA] text-[#B23A3A]"><Trash2 size={16} /></button>
                     </>
                   )}
                 </div>
@@ -1897,7 +1803,7 @@ function SalesRecords({ sales, users, currentUser, isAdmin, onDelete, onPrintInv
                           {isAdmin && (
                             <>
                               <button onClick={() => onEditSale(s)} className="p-1.5 rounded-lg text-[var(--accent-dark)] hover:bg-[var(--surface-3)]" title="تعديل"><Pencil size={16} /></button>
-                              <button onClick={() => onConfirm(`هل تريد حذف الفاتورة ${s.invoiceNo}؟ سيتم إرجاع كمية المنتجات إلى المخزون تلقائياً. لا يمكن التراجع عن هذا الإجراء.`, () => onDelete(s.id))} className="p-1.5 rounded-lg text-[#B23A3A] hover:bg-[#FBEAEA]" title="حذف"><Trash2 size={16} /></button>
+                              <button onClick={() => onConfirm(`هل تريد حذف الفاتورة ${s.invoiceNo}؟ لا يمكن التراجع عن هذا الإجراء.`, () => onDelete(s.id))} className="p-1.5 rounded-lg text-[#B23A3A] hover:bg-[#FBEAEA]" title="حذف"><Trash2 size={16} /></button>
                             </>
                           )}
                         </div>
@@ -2079,10 +1985,10 @@ function Stats({ sales, users, products, currentUser, isAdmin }) {
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <StatCard label="عدد الفواتير" value={list.length} color="var(--accent-dark)" icon={Receipt} />
-        <StatCard label="إجمالي المبيعات" value={fmt(totalRevenue) + " د.ك"} color="var(--accent)" icon={TrendingUp} />
-        <StatCard label="المحصل" value={fmt(totalCollected) + " د.ك"} color="#3F7D57" icon={Wallet} />
-        <StatCard label="المتبقي" value={fmt(totalRemaining) + " د.ك"} color="#B23A3A" icon={AlertTriangle} />
+        <StatCard label="عدد الفواتير" value={list.length} color="var(--accent-dark)" />
+        <StatCard label="إجمالي المبيعات" value={fmt(totalRevenue) + " د.ك"} color="var(--accent)" />
+        <StatCard label="المحصل" value={fmt(totalCollected) + " د.ك"} color="#3F7D57" />
+        <StatCard label="المتبقي" value={fmt(totalRemaining) + " د.ك"} color="#B23A3A" />
       </div>
 
       {isAdmin && (
@@ -2199,10 +2105,10 @@ function Inventory({ products, isAdmin, onSave, onPrintLabels, stockLogs, onLogA
 
       {/* Summary */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <StatCard label="عدد المنتجات" value={products.length} color="var(--accent-dark)" icon={Package} />
-        <StatCard label="منتجات بحاجة لتخزين" value={lowStockCount} color="#B23A3A" icon={AlertTriangle} />
-        {isAdmin && <StatCard label="قيمة المخزون (تكلفة)" value={fmt(inventoryValueCost) + " د.ك"} color="var(--accent)" icon={Wallet2} />}
-        {isAdmin && <StatCard label="قيمة المخزون (بيع)" value={fmt(inventoryValueRetail) + " د.ك"} color="#3F7D57" icon={TrendingUp} />}
+        <StatCard label="عدد المنتجات" value={products.length} color="var(--accent-dark)" />
+        <StatCard label="منتجات بحاجة لتخزين" value={lowStockCount} color="#B23A3A" />
+        {isAdmin && <StatCard label="قيمة المخزون (تكلفة)" value={fmt(inventoryValueCost) + " د.ك"} color="var(--accent)" />}
+        {isAdmin && <StatCard label="قيمة المخزون (بيع)" value={fmt(inventoryValueRetail) + " د.ك"} color="#3F7D57" />}
       </div>
 
       {isAdmin && (
@@ -2390,7 +2296,7 @@ function Inventory({ products, isAdmin, onSave, onPrintLabels, stockLogs, onLogA
 
 /* ---------------------------------- Users Admin ---------------------------------- */
 
-function UsersAdmin({ users, onSave, onConfirm, currentUser }) {
+function UsersAdmin({ users, onSave, onConfirm }) {
   const [form, setForm] = useState({ username: "", password: "", name: "", role: "seller" });
   const [editingId, setEditingId] = useState(null);
   const [editForm, setEditForm] = useState({ username: "", password: "", name: "", role: "seller", securityQuestion: "", securityAnswer: "" });
@@ -2488,18 +2394,12 @@ function UsersAdmin({ users, onSave, onConfirm, currentUser }) {
                 <div>
                   <p className="font-bold">
                     {u.name} <span className="text-xs font-normal text-[var(--muted)]">({u.username})</span>
-                    {u.isPrimaryAdmin && (
-                      <span className="text-[10px] font-semibold text-[var(--accent)] mr-2 inline-flex items-center gap-1">
-                        <ShieldCheck size={11} /> الحساب الأساسي{currentUser.id !== u.id ? " — محمي من التعديل والحذف" : ""}
-                      </span>
-                    )}
+                    {u.isPrimaryAdmin && <span className="text-[10px] font-semibold text-[var(--accent)] mr-2">(الحساب الأساسي)</span>}
                   </p>
                   <p className="text-xs text-[var(--muted)]">{u.role === "admin" ? "مدير" : "بائع"}</p>
                 </div>
                 <div className="flex items-center gap-2">
-                  {(!u.isPrimaryAdmin || currentUser.id === u.id) && (
-                    <button onClick={() => startEdit(u)} className="p-2 rounded-lg text-[var(--accent-dark)] hover:bg-[var(--surface-3)]"><Pencil size={16} /></button>
-                  )}
+                  <button onClick={() => startEdit(u)} className="p-2 rounded-lg text-[var(--accent-dark)] hover:bg-[var(--surface-3)]"><Pencil size={16} /></button>
                   {!u.isPrimaryAdmin && (
                     <button
                       onClick={() => onConfirm(`هل تريد حذف المستخدم "${u.name}"؟ لا يمكن التراجع عن هذا الإجراء.`, () => onSave(users.filter((x) => x.id !== u.id)))}
@@ -2542,7 +2442,7 @@ function AnnouncementPopup({ announcement, onClose }) {
   );
 }
 
-function AnnouncementsPage({ announcements, isAdmin, onCreate, onDelete, onConfirm }) {
+function AnnouncementsPage({ announcements, isAdmin, onCreate, onDelete }) {
   const [title, setTitle] = useState("");
   const [message, setMessage] = useState("");
 
@@ -2585,7 +2485,7 @@ function AnnouncementsPage({ announcements, isAdmin, onCreate, onDelete, onConfi
                   <p className="text-xs text-[var(--muted)]">{a.createdByName} · {dateLabel(a.date)} {timeLabel(a.date)}</p>
                 </div>
                 {isAdmin && (
-                  <button onClick={() => onConfirm(`هل تريد حذف التعميم "${a.title}"؟`, () => onDelete(a.id))} className="p-1.5 rounded-lg text-[#B23A3A] hover:bg-[#FBEAEA] shrink-0"><Trash2 size={16} /></button>
+                  <button onClick={() => onDelete(a.id)} className="p-1.5 rounded-lg text-[#B23A3A] hover:bg-[#FBEAEA] shrink-0"><Trash2 size={16} /></button>
                 )}
               </div>
               <p className="text-sm mt-2 whitespace-pre-line">{a.message}</p>
@@ -2652,8 +2552,8 @@ function ExpensesPage({ expenses, onAdd, onDelete, onConfirm }) {
       <h2 className="text-xl font-bold flex items-center gap-2"><Wallet2 size={20} /> المصروفات</h2>
 
       <div className="grid grid-cols-2 gap-3">
-        <StatCard label="إجمالي المصروفات (حسب الفلتر)" value={fmt(total) + " د.ك"} color="#B23A3A" icon={Wallet2} />
-        <StatCard label="مصروفات هذا الشهر" value={fmt(thisMonthTotal) + " د.ك"} color="var(--accent)" icon={CalendarRange} />
+        <StatCard label="إجمالي المصروفات (حسب الفلتر)" value={fmt(total) + " د.ك"} color="#B23A3A" />
+        <StatCard label="مصروفات هذا الشهر" value={fmt(thisMonthTotal) + " د.ك"} color="var(--accent)" />
       </div>
 
       <Card className="p-4 space-y-3">
@@ -2775,10 +2675,10 @@ function AccountingPage({ sales, products, expenses, stockLogs }) {
       <p className="text-xs text-[var(--muted)] -mt-3">نظرة كاملة تربط المبيعات، تكلفة البضاعة، المصروفات، الهدايا/التالف، وقيمة المخزون في مكان واحد.</p>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <StatCard label="إجمالي المبيعات" value={fmt(totalRevenue) + " د.ك"} color="var(--accent)" icon={TrendingUp} />
-        <StatCard label="المحصل" value={fmt(totalCollected) + " د.ك"} color="#3F7D57" icon={Wallet} />
-        <StatCard label="المتبقي على العملاء" value={fmt(totalRemaining) + " د.ك"} color="#B23A3A" icon={AlertTriangle} />
-        <StatCard label="تكلفة البضاعة المباعة" value={fmt(cogs) + " د.ك"} color="var(--accent-dark)" icon={Package} />
+        <StatCard label="إجمالي المبيعات" value={fmt(totalRevenue) + " د.ك"} color="var(--accent)" />
+        <StatCard label="المحصل" value={fmt(totalCollected) + " د.ك"} color="#3F7D57" />
+        <StatCard label="المتبقي على العملاء" value={fmt(totalRemaining) + " د.ك"} color="#B23A3A" />
+        <StatCard label="تكلفة البضاعة المباعة" value={fmt(cogs) + " د.ك"} color="var(--accent-dark)" />
       </div>
 
       <Card className="p-5">
