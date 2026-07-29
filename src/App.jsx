@@ -20,7 +20,9 @@ const fmt = (n) => {
   const v = Number(n || 0);
   // "en-GB" numeral formatting forces Latin digits (0-9) even inside an RTL/Arabic UI,
   // instead of the Arabic-Indic digits (٠١٢٣) that "ar-KW" would otherwise produce.
-  return v.toLocaleString("en-GB", { minimumFractionDigits: 3, maximumFractionDigits: 3 });
+  // useGrouping:false drops thousand-separator commas so figures stay short and
+  // never wrap awkwardly mid-number on narrow mobile cards.
+  return v.toLocaleString("en-GB", { minimumFractionDigits: 3, maximumFractionDigits: 3, useGrouping: false });
 };
 
 const todayISO = () => new Date().toISOString();
@@ -529,6 +531,7 @@ export default function App() {
   const [expenses, setExpenses] = useState([]);
   const [partners, setPartners] = useState([]);
   const [profitDistributions, setProfitDistributions] = useState([]); // saved profit-sharing history
+  const [dailyBackup, setDailyBackup] = useState(null); // {date, savedAt, data} — auto-overwritten once per day
   const [darkMode, setDarkMode] = useState(false);
   const [toast, setToast] = useState("");
   const [confirmState, setConfirmState] = useState(null); // { message, onConfirm }
@@ -568,6 +571,24 @@ export default function App() {
     setPartners(pt);
     setProfitDistributions(pd);
     if (isInitial) setLoading(false);
+
+    // Automatic rolling daily backup: one single snapshot, overwritten once
+    // per calendar day, so it never grows or takes extra storage space.
+    if (isInitial) {
+      const today = new Date().toISOString().slice(0, 10);
+      const existing = await storeGet("perfume_daily_backup", null);
+      if (!existing || existing.date !== today) {
+        const snapshot = {
+          date: today,
+          savedAt: todayISO(),
+          data: { users: u, products: p, sales: s, seq: sq, settings: st, announcements: an, stockLogs: sl, expenses: ex, partners: pt, profitDistributions: pd },
+        };
+        await storeSet("perfume_daily_backup", snapshot);
+        setDailyBackup(snapshot);
+      } else {
+        setDailyBackup(existing);
+      }
+    }
   }, []);
 
   // Initial load
@@ -1150,6 +1171,18 @@ export default function App() {
           {view === "backup" && isAdmin && (
             <BackupPage
               data={{ users, products, sales, seq, settings, announcements, stockLogs, expenses, partners, profitDistributions }}
+              dailyBackup={dailyBackup}
+              onRefreshDailyBackup={async () => {
+                const today = new Date().toISOString().slice(0, 10);
+                const snapshot = {
+                  date: today,
+                  savedAt: todayISO(),
+                  data: { users, products, sales, seq, settings, announcements, stockLogs, expenses, partners, profitDistributions },
+                };
+                await storeSet("perfume_daily_backup", snapshot);
+                setDailyBackup(snapshot);
+                showToast("تم تحديث النسخة اليومية الآن");
+              }}
               onRestore={async (next, mode) => {
                 if (mode === "replace") {
                   await persistUsers(next.users || users);
@@ -1509,7 +1542,7 @@ function StatCard({ label, value, color, icon: Icon }) {
       <div className="flex items-start justify-between gap-2">
         <div className="min-w-0 flex-1">
           <p className="text-[11px] text-[var(--muted)] mb-1 leading-snug line-clamp-2">{label}</p>
-          <p dir="ltr" className="text-base font-extrabold leading-tight break-words text-right" style={{ color }}>{value}</p>
+          <p dir="ltr" className="text-sm font-extrabold leading-tight whitespace-nowrap text-right" style={{ color }}>{value}</p>
         </div>
         {Icon && (
           <div className="w-8 h-8 rounded-full flex items-center justify-center shrink-0" style={{ background: `color-mix(in srgb, ${color} 16%, transparent)` }}>
@@ -2203,9 +2236,9 @@ function Inventory({ products, isAdmin, onSave, onPrintLabels, stockLogs, onLogA
       {/* Summary */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <StatCard label="عدد المنتجات" value={products.length} color="var(--accent-dark)" icon={Package} />
-        <StatCard label="منتجات بحاجة لتخزين" value={lowStockCount} color="#B23A3A" icon={AlertTriangle} />
-        {isAdmin && <StatCard label="قيمة المخزون (تكلفة)" value={fmt(inventoryValueCost) + " د.ك"} color="var(--accent)" icon={Wallet2} />}
-        {isAdmin && <StatCard label="قيمة المخزون (بيع)" value={fmt(inventoryValueRetail) + " د.ك"} color="#3F7D57" icon={TrendingUp} />}
+        <StatCard label="بحاجة لتخزين" value={lowStockCount} color="#B23A3A" icon={AlertTriangle} />
+        {isAdmin && <StatCard label="قيمة التكلفة" value={fmt(inventoryValueCost) + " د.ك"} color="var(--accent)" icon={Wallet2} />}
+        {isAdmin && <StatCard label="قيمة البيع" value={fmt(inventoryValueRetail) + " د.ك"} color="#3F7D57" icon={TrendingUp} />}
       </div>
 
       {isAdmin && (
@@ -2655,7 +2688,7 @@ function ExpensesPage({ expenses, onAdd, onDelete, onConfirm }) {
       <h2 className="text-xl font-bold flex items-center gap-2"><Wallet2 size={20} /> المصروفات</h2>
 
       <div className="grid grid-cols-2 gap-3">
-        <StatCard label="إجمالي المصروفات (حسب الفلتر)" value={fmt(total) + " د.ك"} color="#B23A3A" icon={Wallet2} />
+        <StatCard label="إجمالي المصروفات" value={fmt(total) + " د.ك"} color="#B23A3A" icon={Wallet2} />
         <StatCard label="مصروفات هذا الشهر" value={fmt(thisMonthTotal) + " د.ك"} color="var(--accent)" icon={CalendarRange} />
       </div>
 
@@ -2780,8 +2813,8 @@ function AccountingPage({ sales, products, expenses, stockLogs }) {
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <StatCard label="إجمالي المبيعات" value={fmt(totalRevenue) + " د.ك"} color="var(--accent)" icon={TrendingUp} />
         <StatCard label="المحصل" value={fmt(totalCollected) + " د.ك"} color="#3F7D57" icon={Wallet} />
-        <StatCard label="المتبقي على العملاء" value={fmt(totalRemaining) + " د.ك"} color="#B23A3A" icon={AlertTriangle} />
-        <StatCard label="تكلفة البضاعة المباعة" value={fmt(cogs) + " د.ك"} color="var(--accent-dark)" icon={Package} />
+        <StatCard label="متبقي العملاء" value={fmt(totalRemaining) + " د.ك"} color="#B23A3A" icon={AlertTriangle} />
+        <StatCard label="تكلفة البضاعة" value={fmt(cogs) + " د.ك"} color="var(--accent-dark)" icon={Package} />
       </div>
 
       <Card className="p-5">
@@ -3166,7 +3199,7 @@ function SettingsPage({ settings, onSave }) {
 
 /* ---------------------------------- Backup ---------------------------------- */
 
-function BackupPage({ data, onRestore }) {
+function BackupPage({ data, onRestore, dailyBackup, onRefreshDailyBackup }) {
   const fileRef = useRef(null);
   const [pending, setPending] = useState(null);
 
@@ -3176,6 +3209,19 @@ function BackupPage({ data, onRestore }) {
     const a = document.createElement("a");
     a.href = url;
     a.download = `عطورنا-نسخة-احتياطية-${new Date().toISOString().slice(0, 10)}.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    URL.revokeObjectURL(url);
+  };
+
+  const exportDailyBackup = () => {
+    if (!dailyBackup) return;
+    const blob = new Blob([JSON.stringify(dailyBackup.data, null, 2)], { type: "application/json" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `عطورنا-نسخة-يومية-${dailyBackup.date}.json`;
     document.body.appendChild(a);
     a.click();
     a.remove();
@@ -3202,13 +3248,36 @@ function BackupPage({ data, onRestore }) {
       <h2 className="text-xl font-bold">النسخ الاحتياطي واستعادة البيانات</h2>
 
       <Card className="p-4">
-        <h3 className="font-bold mb-2">تنزيل نسخة احتياطية</h3>
+        <h3 className="font-bold mb-2 flex items-center gap-2"><Save size={18} /> النسخة اليومية التلقائية</h3>
+        <p className="text-sm text-[var(--muted)] mb-3">
+          يحفظ النظام نسخة كاملة من كل بياناتك تلقائياً مرة واحدة كل يوم، وتستبدل نسخة اليوم السابق — بحيث توجد دائماً نسخة واحدة فقط محفوظة، ولا تتراكم لتأخذ مساحة إضافية.
+        </p>
+        {dailyBackup ? (
+          <div className="bg-[var(--surface-2)] rounded-xl p-3 mb-3 text-sm">
+            <p><b>آخر نسخة محفوظة:</b> {dateLabel(dailyBackup.savedAt)} — {timeLabel(dailyBackup.savedAt)}</p>
+          </div>
+        ) : (
+          <p className="text-xs text-[var(--muted)] mb-3">لم تُحفظ أي نسخة يومية بعد.</p>
+        )}
+        <div className="flex flex-wrap gap-2">
+          <Btn variant="outline" onClick={onRefreshDailyBackup}><Save size={16} /> تحديث النسخة الآن</Btn>
+          {dailyBackup && (
+            <>
+              <Btn variant="ghost" onClick={exportDailyBackup}><Download size={16} /> تنزيل هذه النسخة</Btn>
+              <Btn variant="danger" onClick={() => setPending(dailyBackup.data)}>استعادة هذه النسخة</Btn>
+            </>
+          )}
+        </div>
+      </Card>
+
+      <Card className="p-4">
+        <h3 className="font-bold mb-2">تنزيل نسخة احتياطية يدوية</h3>
         <p className="text-sm text-[var(--muted)] mb-3">يشمل: المستخدمين، المنتجات، المبيعات، الفواتير، الإعدادات.</p>
         <Btn onClick={exportData}><Download size={16} /> تنزيل نسخة JSON</Btn>
       </Card>
 
       <Card className="p-4">
-        <h3 className="font-bold mb-2">استعادة / دمج نسخة</h3>
+        <h3 className="font-bold mb-2">استعادة / دمج نسخة من ملف</h3>
         <input ref={fileRef} type="file" accept="application/json" onChange={handleFile} className="hidden" />
         <Btn variant="outline" onClick={() => fileRef.current?.click()}><Upload size={16} /> اختيار ملف نسخة احتياطية</Btn>
 
