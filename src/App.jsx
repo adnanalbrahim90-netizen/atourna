@@ -1356,7 +1356,7 @@ function NotificationsBell({ open, setOpen, announcements, currentUser, products
                   >
                     <Wallet size={15} className="text-[#B23A3A] shrink-0 mt-0.5" />
                     <div className="flex-1 min-w-0">
-                      <p className="text-xs font-semibold">{fmt(totalRemaining)} د.ك مستحقة على العملاء</p>
+                      <p className="text-xs font-semibold">{fmt(totalRemaining)} K.D مستحقة على العملاء</p>
                       <p className="text-[10px] text-[var(--muted)]">عبر {remainingCount} فاتورة غير مسدَّدة بالكامل</p>
                     </div>
                   </button>
@@ -1488,9 +1488,9 @@ function Dashboard({ sales, products, currentUser, setView }) {
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <StatCard label="عدد الفواتير" value={mySales.length} color="var(--accent-dark)" icon={Receipt} />
-        <StatCard label="إجمالي المبيعات" value={fmt(totalRevenue) + " د.ك"} color="var(--accent)" icon={TrendingUp} />
-        <StatCard label="المحصل" value={fmt(totalCollected) + " د.ك"} color="#3F7D57" icon={Wallet} />
-        <StatCard label="المتبقي" value={fmt(totalRemaining) + " د.ك"} color="#B23A3A" icon={AlertTriangle} />
+        <StatCard label="إجمالي المبيعات" value={fmt(totalRevenue) + " K.D"} color="var(--accent)" icon={TrendingUp} />
+        <StatCard label="المحصل" value={fmt(totalCollected) + " K.D"} color="#3F7D57" icon={Wallet} />
+        <StatCard label="المتبقي" value={fmt(totalRemaining) + " K.D"} color="#B23A3A" icon={AlertTriangle} />
       </div>
 
       <div className="grid md:grid-cols-2 gap-4">
@@ -1506,7 +1506,7 @@ function Dashboard({ sales, products, currentUser, setView }) {
                     <p className="font-semibold">{s.invoiceNo}</p>
                     <p className="text-xs text-[var(--muted)]">{s.sellerName} · {dateLabel(s.date)}</p>
                   </div>
-                  <p className="font-bold text-[var(--accent)]">{fmt(s.total)} د.ك</p>
+                  <p className="font-bold text-[var(--accent)]">{fmt(s.total)} K.D</p>
                 </div>
               ))}
             </div>
@@ -1538,10 +1538,10 @@ function Dashboard({ sales, products, currentUser, setView }) {
 
 function StatCard({ label, value, color, icon: Icon }) {
   return (
-    <Card className="p-3.5 card-hover">
-      <div className="flex items-start justify-between gap-2">
+    <Card className="p-4 card-hover">
+      <div className="flex items-start justify-between gap-2.5">
         <div className="min-w-0 flex-1">
-          <p className="text-[11px] text-[var(--muted)] mb-1 leading-snug line-clamp-2">{label}</p>
+          <p className="text-[11px] text-[var(--muted)] mb-1.5 leading-snug line-clamp-2">{label}</p>
           <p dir="ltr" className="text-sm font-extrabold leading-tight whitespace-nowrap text-right" style={{ color }}>{value}</p>
         </div>
         {Icon && (
@@ -1676,7 +1676,7 @@ function NewSale({ products, users, currentUser, sales, seq, settings, onCreate 
           <Field label="الكمية">
             <input type="number" min="1" className={inputCls} value={qty} onChange={(e) => setQty(e.target.value)} />
           </Field>
-          <Field label="سعر الوحدة (د.ك)">
+          <Field label="سعر الوحدة (K.D)">
             <input type="number" min="0" step="0.001" className={inputCls} value={unitPrice} onChange={(e) => setUnitPrice(e.target.value)} />
           </Field>
         </div>
@@ -1695,10 +1695,10 @@ function NewSale({ products, users, currentUser, sales, seq, settings, onCreate 
               <div key={l.lineId} className="flex items-center justify-between text-sm bg-[var(--surface-2)] rounded-xl px-3 py-2">
                 <div>
                   <p className="font-semibold">{l.name}</p>
-                  <p className="text-xs text-[var(--muted)]">{l.qty} × {fmt(l.price)} د.ك</p>
+                  <p className="text-xs text-[var(--muted)]">{l.qty} × {fmt(l.price)} K.D</p>
                 </div>
                 <div className="flex items-center gap-3">
-                  <p className="font-bold text-[var(--accent)]">{fmt(l.total)} د.ك</p>
+                  <p className="font-bold text-[var(--accent)]">{fmt(l.total)} K.D</p>
                   <button onClick={() => removeLine(l.lineId)} className="text-[#B23A3A]"><Trash2 size={16} /></button>
                 </div>
               </div>
@@ -1711,7 +1711,7 @@ function NewSale({ products, users, currentUser, sales, seq, settings, onCreate 
         <Card className="p-4 space-y-3">
           <div className="flex justify-between text-sm">
             <span className="text-[var(--muted)]">المجموع الفرعي</span>
-            <span className="font-semibold">{fmt(subtotal)} د.ك</span>
+            <span className="font-semibold">{fmt(subtotal)} K.D</span>
           </div>
 
           <div className="pt-2 border-t border-[var(--border)]">
@@ -1723,7 +1723,7 @@ function NewSale({ products, users, currentUser, sales, seq, settings, onCreate 
                   onClick={() => setDiscountType("amount")}
                   className={`px-3 py-2 text-xs font-semibold ${discountType === "amount" ? "bg-[var(--accent)] text-white" : "bg-[var(--surface-2)] text-[var(--muted)]"}`}
                 >
-                  د.ك
+                  K.D
                 </button>
                 <button
                   type="button"
@@ -1746,7 +1746,7 @@ function NewSale({ products, users, currentUser, sales, seq, settings, onCreate 
             {discountAmount > 0 && (
               <div className="flex justify-between text-sm mt-2">
                 <span className="text-[var(--muted)]">قيمة الخصم</span>
-                <span className="font-semibold text-[#B23A3A]">− {fmt(discountAmount)} د.ك</span>
+                <span className="font-semibold text-[#B23A3A]">− {fmt(discountAmount)} K.D</span>
               </div>
             )}
           </div>
@@ -1754,20 +1754,20 @@ function NewSale({ products, users, currentUser, sales, seq, settings, onCreate 
           {taxEnabled && (
             <div className="flex justify-between text-sm">
               <span className="text-[var(--muted)]">{settings.taxLabel || "الضريبة"} ({taxRate}%)</span>
-              <span className="font-semibold">+ {fmt(taxAmount)} د.ك</span>
+              <span className="font-semibold">+ {fmt(taxAmount)} K.D</span>
             </div>
           )}
 
           <div className="flex justify-between text-sm pt-2 border-t border-[var(--border)]">
             <span className="text-[var(--muted)]">الإجمالي النهائي</span>
-            <span className="font-extrabold text-lg">{fmt(total)} د.ك</span>
+            <span className="font-extrabold text-lg">{fmt(total)} K.D</span>
           </div>
-          <Field label="المبلغ المحصل (د.ك)">
+          <Field label="المبلغ المحصل (K.D)">
             <input type="number" min="0" step="0.001" className={inputCls} value={collected} placeholder={fmt(total)} onChange={(e) => setCollected(e.target.value)} />
           </Field>
           <div className="flex justify-between text-sm">
             <span className="text-[var(--muted)]">المبلغ المتبقي</span>
-            <span className={`font-bold ${remaining > 0 ? "text-[#B23A3A]" : "text-[#3F7D57]"}`}>{fmt(remaining)} د.ك</span>
+            <span className={`font-bold ${remaining > 0 ? "text-[#B23A3A]" : "text-[#3F7D57]"}`}>{fmt(remaining)} K.D</span>
           </div>
           <Btn onClick={submit} className="w-full">
             <Receipt size={16} /> إصدار الفاتورة وحفظ عملية البيع
@@ -1841,7 +1841,7 @@ function SalesRecords({ sales, users, currentUser, isAdmin, onDelete, onPrintInv
                     <p className="font-bold">{s.invoiceNo}</p>
                     <p className="text-xs text-[var(--muted)]">{s.sellerName} · {dateLabel(s.date)} {timeLabel(s.date)}</p>
                   </div>
-                  <p className="font-extrabold text-[var(--accent)]">{fmt(s.total)} د.ك</p>
+                  <p className="font-extrabold text-[var(--accent)]">{fmt(s.total)} K.D</p>
                 </div>
                 <div className="text-xs text-[var(--muted)] mb-2">{s.items.map((i) => i.name).join("، ")}</div>
                 <div className="flex justify-between text-xs mb-3">
@@ -1986,7 +1986,7 @@ function PayRow({ sale, onSubmit, onCancel }) {
         step="0.001"
         autoFocus
         className={inputCls + " flex-1 !py-2"}
-        placeholder={`حتى ${fmt(sale.remaining)} د.ك`}
+        placeholder={`حتى ${fmt(sale.remaining)} K.D`}
         value={amount}
         onChange={(e) => setAmount(e.target.value)}
       />
@@ -2116,15 +2116,15 @@ function Stats({ sales, users, products, currentUser, isAdmin }) {
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <StatCard label="عدد الفواتير" value={list.length} color="var(--accent-dark)" icon={Receipt} />
-        <StatCard label="إجمالي المبيعات" value={fmt(totalRevenue) + " د.ك"} color="var(--accent)" icon={TrendingUp} />
-        <StatCard label="المحصل" value={fmt(totalCollected) + " د.ك"} color="#3F7D57" icon={Wallet} />
-        <StatCard label="المتبقي" value={fmt(totalRemaining) + " د.ك"} color="#B23A3A" icon={AlertTriangle} />
+        <StatCard label="إجمالي المبيعات" value={fmt(totalRevenue) + " K.D"} color="var(--accent)" icon={TrendingUp} />
+        <StatCard label="المحصل" value={fmt(totalCollected) + " K.D"} color="#3F7D57" icon={Wallet} />
+        <StatCard label="المتبقي" value={fmt(totalRemaining) + " K.D"} color="#B23A3A" icon={AlertTriangle} />
       </div>
 
       {isAdmin && (
         <Card className="p-4">
           <p className="text-xs text-[var(--muted)] mb-1">صافي الربح (بعد خصم سعر التكلفة)</p>
-          <p className={`text-xl sm:text-2xl font-extrabold break-words ${totalProfit >= 0 ? "text-[#3F7D57]" : "text-[#B23A3A]"}`}>{fmt(totalProfit)} د.ك</p>
+          <p className={`text-xl sm:text-2xl font-extrabold break-words ${totalProfit >= 0 ? "text-[#3F7D57]" : "text-[#B23A3A]"}`}>{fmt(totalProfit)} K.D</p>
           <p className="text-xs text-[var(--muted)] mt-1">مرئي للمدير فقط — بناءً على سعر التكلفة المسجَّل لكل منتج</p>
         </Card>
       )}
@@ -2138,7 +2138,7 @@ function Stats({ sales, users, products, currentUser, isAdmin }) {
                 <CartesianGrid strokeDasharray="3 3" stroke="#F0E6D0" />
                 <XAxis dataKey="name" tick={{ fontSize: 12 }} />
                 <YAxis tick={{ fontSize: 12 }} />
-                <Tooltip formatter={(v) => fmt(v) + " د.ك"} />
+                <Tooltip formatter={(v) => fmt(v) + " K.D"} />
                 <Bar dataKey="total" fill="var(--accent)" radius={[6, 6, 0, 0]} />
               </BarChart>
             </ResponsiveContainer>
@@ -2237,8 +2237,8 @@ function Inventory({ products, isAdmin, onSave, onPrintLabels, stockLogs, onLogA
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <StatCard label="عدد المنتجات" value={products.length} color="var(--accent-dark)" icon={Package} />
         <StatCard label="بحاجة لتخزين" value={lowStockCount} color="#B23A3A" icon={AlertTriangle} />
-        {isAdmin && <StatCard label="قيمة التكلفة" value={fmt(inventoryValueCost) + " د.ك"} color="var(--accent)" icon={Wallet2} />}
-        {isAdmin && <StatCard label="قيمة البيع" value={fmt(inventoryValueRetail) + " د.ك"} color="#3F7D57" icon={TrendingUp} />}
+        {isAdmin && <StatCard label="قيمة التكلفة" value={fmt(inventoryValueCost) + " K.D"} color="var(--accent)" icon={Wallet2} />}
+        {isAdmin && <StatCard label="قيمة البيع" value={fmt(inventoryValueRetail) + " K.D"} color="#3F7D57" icon={TrendingUp} />}
       </div>
 
       {isAdmin && (
@@ -2248,8 +2248,8 @@ function Inventory({ products, isAdmin, onSave, onPrintLabels, stockLogs, onLogA
             <div className="col-span-2 md:col-span-1">
               <Field label="اسم المنتج"><input className={inputCls} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="عود كمبودي" /></Field>
             </div>
-            <Field label="سعر البيع (د.ك)"><input type="number" step="0.001" className={inputCls} value={form.price} onChange={(e) => setForm({ ...form, price: e.target.value })} /></Field>
-            <Field label="سعر التكلفة (د.ك)"><input type="number" step="0.001" className={inputCls} value={form.cost} onChange={(e) => setForm({ ...form, cost: e.target.value })} /></Field>
+            <Field label="سعر البيع (K.D)"><input type="number" step="0.001" className={inputCls} value={form.price} onChange={(e) => setForm({ ...form, price: e.target.value })} /></Field>
+            <Field label="سعر التكلفة (K.D)"><input type="number" step="0.001" className={inputCls} value={form.cost} onChange={(e) => setForm({ ...form, cost: e.target.value })} /></Field>
             <Field label="الكمية بالمخزون"><input type="number" className={inputCls} value={form.stock} onChange={(e) => setForm({ ...form, stock: e.target.value })} /></Field>
             <Field label="حد التنبيه"><input type="number" className={inputCls} value={form.minStock} onChange={(e) => setForm({ ...form, minStock: e.target.value })} /></Field>
           </div>
@@ -2284,8 +2284,8 @@ function Inventory({ products, isAdmin, onSave, onPrintLabels, stockLogs, onLogA
                 <div className="flex justify-between items-start gap-2">
                   <div className="min-w-0">
                     <p className="font-bold truncate">{p.name}</p>
-                    <p className="text-xs text-[var(--muted)]">{fmt(p.price)} د.ك / وحدة</p>
-                    {isAdmin && <p className="text-xs text-[var(--muted)]">التكلفة: {fmt(p.cost || 0)} د.ك</p>}
+                    <p className="text-xs text-[var(--muted)]">{fmt(p.price)} K.D / وحدة</p>
+                    {isAdmin && <p className="text-xs text-[var(--muted)]">التكلفة: {fmt(p.cost || 0)} K.D</p>}
                   </div>
                   <span className={`text-[10px] font-bold px-2 py-1 rounded-full shrink-0 ${badge.cls}`}>{badge.label}</span>
                 </div>
@@ -2688,8 +2688,8 @@ function ExpensesPage({ expenses, onAdd, onDelete, onConfirm }) {
       <h2 className="text-xl font-bold flex items-center gap-2"><Wallet2 size={20} /> المصروفات</h2>
 
       <div className="grid grid-cols-2 gap-3">
-        <StatCard label="إجمالي المصروفات" value={fmt(total) + " د.ك"} color="#B23A3A" icon={Wallet2} />
-        <StatCard label="مصروفات هذا الشهر" value={fmt(thisMonthTotal) + " د.ك"} color="var(--accent)" icon={CalendarRange} />
+        <StatCard label="إجمالي المصروفات" value={fmt(total) + " K.D"} color="#B23A3A" icon={Wallet2} />
+        <StatCard label="مصروفات هذا الشهر" value={fmt(thisMonthTotal) + " K.D"} color="var(--accent)" icon={CalendarRange} />
       </div>
 
       <Card className="p-4 space-y-3">
@@ -2700,7 +2700,7 @@ function ExpensesPage({ expenses, onAdd, onDelete, onConfirm }) {
               {EXPENSE_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
             </select>
           </Field>
-          <Field label="المبلغ (د.ك)">
+          <Field label="المبلغ (K.D)">
             <input type="number" min="0" step="0.001" className={inputCls} value={amount} onChange={(e) => setAmount(e.target.value)} />
           </Field>
           <div className="col-span-2">
@@ -2738,7 +2738,7 @@ function ExpensesPage({ expenses, onAdd, onDelete, onConfirm }) {
                 <p className="text-[11px] text-[var(--muted)]">{e.byUserName} · {dateLabel(e.date)}</p>
               </div>
               <div className="flex items-center gap-3">
-                <p className="font-bold text-[#B23A3A]">{fmt(e.amount)} د.ك</p>
+                <p className="font-bold text-[#B23A3A]">{fmt(e.amount)} K.D</p>
                 <button
                   onClick={() => onConfirm("هل تريد حذف هذا المصروف؟", () => onDelete(e.id))}
                   className="p-1.5 rounded-lg text-[#B23A3A] hover:bg-[#FBEAEA]"
@@ -2811,10 +2811,10 @@ function AccountingPage({ sales, products, expenses, stockLogs }) {
       <p className="text-xs text-[var(--muted)] -mt-3">نظرة كاملة تربط المبيعات، تكلفة البضاعة، المصروفات، الهدايا/التالف، وقيمة المخزون في مكان واحد.</p>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <StatCard label="إجمالي المبيعات" value={fmt(totalRevenue) + " د.ك"} color="var(--accent)" icon={TrendingUp} />
-        <StatCard label="المحصل" value={fmt(totalCollected) + " د.ك"} color="#3F7D57" icon={Wallet} />
-        <StatCard label="متبقي العملاء" value={fmt(totalRemaining) + " د.ك"} color="#B23A3A" icon={AlertTriangle} />
-        <StatCard label="تكلفة البضاعة" value={fmt(cogs) + " د.ك"} color="var(--accent-dark)" icon={Package} />
+        <StatCard label="إجمالي المبيعات" value={fmt(totalRevenue) + " K.D"} color="var(--accent)" icon={TrendingUp} />
+        <StatCard label="المحصل" value={fmt(totalCollected) + " K.D"} color="#3F7D57" icon={Wallet} />
+        <StatCard label="متبقي العملاء" value={fmt(totalRemaining) + " K.D"} color="#B23A3A" icon={AlertTriangle} />
+        <StatCard label="تكلفة البضاعة" value={fmt(cogs) + " K.D"} color="var(--accent-dark)" icon={Package} />
       </div>
 
       <Card className="p-5">
@@ -2824,20 +2824,20 @@ function AccountingPage({ sales, products, expenses, stockLogs }) {
             صافي الربح الحقيقي
           </p>
         </div>
-        <p className={`text-2xl sm:text-3xl font-extrabold break-words ${netProfit >= 0 ? "text-[#3F7D57]" : "text-[#B23A3A]"}`}>{fmt(netProfit)} د.ك</p>
+        <p className={`text-2xl sm:text-3xl font-extrabold break-words ${netProfit >= 0 ? "text-[#3F7D57]" : "text-[#B23A3A]"}`}>{fmt(netProfit)} K.D</p>
         <p className="text-xs text-[var(--muted)] mt-2">= إجمالي المبيعات − تكلفة البضاعة − المصروفات − قيمة الهدايا/التالف/التجربة (بسعر التكلفة)</p>
         <div className="grid grid-cols-3 gap-3 mt-4 pt-4 border-t border-[var(--border)] text-center">
           <div>
             <p className="text-[11px] text-[var(--muted)]">الربح الإجمالي</p>
-            <p className="font-bold">{fmt(grossProfit)} د.ك</p>
+            <p className="font-bold">{fmt(grossProfit)} K.D</p>
           </div>
           <div>
             <p className="text-[11px] text-[var(--muted)]">إجمالي المصروفات</p>
-            <p className="font-bold text-[#B23A3A]">{fmt(totalExpenses)} د.ك</p>
+            <p className="font-bold text-[#B23A3A]">{fmt(totalExpenses)} K.D</p>
           </div>
           <div>
             <p className="text-[11px] text-[var(--muted)]">هدر (هدايا/تالف/تجربة)</p>
-            <p className="font-bold text-[#B23A3A]">{fmt(totalShrinkage)} د.ك</p>
+            <p className="font-bold text-[#B23A3A]">{fmt(totalShrinkage)} K.D</p>
           </div>
         </div>
       </Card>
@@ -2850,7 +2850,7 @@ function AccountingPage({ sales, products, expenses, stockLogs }) {
               <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
               <XAxis dataKey="name" tick={{ fontSize: 12 }} />
               <YAxis tick={{ fontSize: 12 }} />
-              <Tooltip formatter={(v) => fmt(v) + " د.ك"} />
+              <Tooltip formatter={(v) => fmt(v) + " K.D"} />
               <Bar dataKey="value" radius={[6, 6, 0, 0]}>
                 {chartData.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
               </Bar>
@@ -2863,9 +2863,9 @@ function AccountingPage({ sales, products, expenses, stockLogs }) {
         <Card className="p-4">
           <h3 className="font-bold mb-3">قيمة المخزون الحالي</h3>
           <div className="space-y-2 text-sm">
-            <div className="flex justify-between"><span className="text-[var(--muted)]">بسعر التكلفة</span><span className="font-bold">{fmt(inventoryValueCost)} د.ك</span></div>
-            <div className="flex justify-between"><span className="text-[var(--muted)]">بسعر البيع</span><span className="font-bold">{fmt(inventoryValueRetail)} د.ك</span></div>
-            <div className="flex justify-between pt-2 border-t border-[var(--border)]"><span className="text-[var(--muted)]">الربح المحتمل عند بيع كل المخزون</span><span className="font-bold text-[#3F7D57]">{fmt(potentialProfit)} د.ك</span></div>
+            <div className="flex justify-between"><span className="text-[var(--muted)]">بسعر التكلفة</span><span className="font-bold">{fmt(inventoryValueCost)} K.D</span></div>
+            <div className="flex justify-between"><span className="text-[var(--muted)]">بسعر البيع</span><span className="font-bold">{fmt(inventoryValueRetail)} K.D</span></div>
+            <div className="flex justify-between pt-2 border-t border-[var(--border)]"><span className="text-[var(--muted)]">الربح المحتمل عند بيع كل المخزون</span><span className="font-bold text-[#3F7D57]">{fmt(potentialProfit)} K.D</span></div>
           </div>
         </Card>
 
@@ -2875,7 +2875,7 @@ function AccountingPage({ sales, products, expenses, stockLogs }) {
             {Object.entries(shrinkageByType).map(([type, val]) => (
               <div key={type} className="flex justify-between">
                 <span className="text-[var(--muted)]">{STOCK_LOG_LABELS[type]}</span>
-                <span className="font-bold text-[#B23A3A]">{fmt(val)} د.ك</span>
+                <span className="font-bold text-[#B23A3A]">{fmt(val)} K.D</span>
               </div>
             ))}
           </div>
@@ -2889,7 +2889,7 @@ function AccountingPage({ sales, products, expenses, stockLogs }) {
             {expensesByCategory.sort((a, b) => b.total - a.total).map((c) => (
               <div key={c.name} className="flex justify-between text-sm">
                 <span className="text-[var(--muted)]">{c.name}</span>
-                <span className="font-semibold">{fmt(c.total)} د.ك</span>
+                <span className="font-semibold">{fmt(c.total)} K.D</span>
               </div>
             ))}
           </div>
@@ -3022,25 +3022,25 @@ function CapitalPartnersPage({
         <div className="grid grid-cols-2 gap-2 text-sm mb-3">
           <div className="bg-[var(--surface-2)] rounded-xl p-2.5">
             <p className="text-[10px] text-[var(--muted)]">إجمالي المبلغ المحصَّل</p>
-            <p className="font-bold">{fmt(totalCollected)} د.ك</p>
+            <p className="font-bold">{fmt(totalCollected)} K.D</p>
           </div>
           <div className="bg-[var(--surface-2)] rounded-xl p-2.5">
             <p className="text-[10px] text-[var(--muted)]">الربح الإجمالي (بعد تكلفة البضاعة)</p>
-            <p className="font-bold">{fmt(grossProfit)} د.ك</p>
+            <p className="font-bold">{fmt(grossProfit)} K.D</p>
           </div>
           <div className="bg-[var(--surface-2)] rounded-xl p-2.5">
             <p className="text-[10px] text-[var(--muted)]">إجمالي المصروفات</p>
-            <p className="font-bold text-[#B23A3A]">{fmt(totalExpenses)} د.ك</p>
+            <p className="font-bold text-[#B23A3A]">{fmt(totalExpenses)} K.D</p>
           </div>
           <div className="bg-[var(--surface-2)] rounded-xl p-2.5">
             <p className="text-[10px] text-[var(--muted)]">إجمالي الهدر (هدايا/تالف/تجربة)</p>
-            <p className="font-bold text-[#B23A3A]">{fmt(totalShrinkage)} د.ك</p>
+            <p className="font-bold text-[#B23A3A]">{fmt(totalShrinkage)} K.D</p>
           </div>
         </div>
 
         <div className="bg-[var(--surface-3)] rounded-xl p-3 text-center mb-3">
           <p className="text-[11px] text-[var(--muted)]">صافي الربح القابل للتوزيع</p>
-          <p className={`text-xl font-extrabold break-words ${netProfit >= 0 ? "text-[#3F7D57]" : "text-[#B23A3A]"}`}>{fmt(netProfit)} د.ك</p>
+          <p className={`text-xl font-extrabold break-words ${netProfit >= 0 ? "text-[#3F7D57]" : "text-[#B23A3A]"}`}>{fmt(netProfit)} K.D</p>
         </div>
 
         <Btn className="w-full" onClick={calculate} disabled={!percentValid}>
@@ -3053,7 +3053,7 @@ function CapitalPartnersPage({
             {result.partners.map((p) => (
               <div key={p.id} className="flex justify-between items-center text-sm bg-[var(--surface-2)] rounded-lg px-3 py-2">
                 <span className="font-semibold">{p.name} <span className="text-[var(--muted)] font-normal">({p.percent}%)</span></span>
-                <span className="font-bold text-[var(--accent)]">{fmt(p.amount)} د.ك</span>
+                <span className="font-bold text-[var(--accent)]">{fmt(p.amount)} K.D</span>
               </div>
             ))}
 
@@ -3077,7 +3077,7 @@ function CapitalPartnersPage({
                 <div className="flex items-center justify-between">
                   <div>
                     <p className="text-sm font-semibold">{d.periodLabel}</p>
-                    <p className="text-[11px] text-[var(--muted)]">صافي الربح: {fmt(d.netProfit)} د.ك · بواسطة {d.byUserName} · {dateLabel(d.date)}</p>
+                    <p className="text-[11px] text-[var(--muted)]">صافي الربح: {fmt(d.netProfit)} K.D · بواسطة {d.byUserName} · {dateLabel(d.date)}</p>
                   </div>
                   <div className="flex items-center gap-2">
                     <button onClick={() => onPrint(d)} className="p-1.5 rounded-lg text-[var(--accent-dark)] hover:bg-[var(--surface-3)]"><Printer size={15} /></button>
@@ -3367,7 +3367,7 @@ function EditSaleModal({ sale, products, onClose, onSave }) {
             <div key={l.lineId} className="flex items-center gap-2 bg-[var(--surface-2)] rounded-xl px-3 py-2">
               <div className="flex-1">
                 <p className="text-sm font-semibold">{l.name}</p>
-                <p className="text-xs text-[var(--muted)]">{fmt(l.price)} د.ك / وحدة</p>
+                <p className="text-xs text-[var(--muted)]">{fmt(l.price)} K.D / وحدة</p>
               </div>
               <input
                 type="number"
@@ -3401,14 +3401,14 @@ function EditSaleModal({ sale, products, onClose, onSave }) {
 
         <div className="flex justify-between text-sm mb-2">
           <span className="text-[var(--muted)]">المجموع الفرعي</span>
-          <span className="font-semibold">{fmt(subtotal)} د.ك</span>
+          <span className="font-semibold">{fmt(subtotal)} K.D</span>
         </div>
 
         <div className="mb-3">
           <span className="block text-xs font-semibold text-[var(--muted)] mb-1.5 flex items-center gap-1"><Percent size={12} /> الخصم</span>
           <div className="flex gap-2">
             <div className="flex rounded-xl overflow-hidden border border-[var(--border)]">
-              <button type="button" onClick={() => setDiscountType("amount")} className={`px-3 py-2 text-xs font-semibold ${discountType === "amount" ? "bg-[var(--accent)] text-white" : "bg-[var(--surface-2)] text-[var(--muted)]"}`}>د.ك</button>
+              <button type="button" onClick={() => setDiscountType("amount")} className={`px-3 py-2 text-xs font-semibold ${discountType === "amount" ? "bg-[var(--accent)] text-white" : "bg-[var(--surface-2)] text-[var(--muted)]"}`}>K.D</button>
               <button type="button" onClick={() => setDiscountType("percent")} className={`px-3 py-2 text-xs font-semibold ${discountType === "percent" ? "bg-[var(--accent)] text-white" : "bg-[var(--surface-2)] text-[var(--muted)]"}`}>%</button>
             </div>
             <input type="number" min="0" step="0.001" className={inputCls + " flex-1"} value={discountValue} onChange={(e) => setDiscountValue(e.target.value)} />
@@ -3418,15 +3418,15 @@ function EditSaleModal({ sale, products, onClose, onSave }) {
         {sale.taxEnabled && (
           <div className="flex justify-between text-sm mb-2">
             <span className="text-[var(--muted)]">{sale.taxLabel || "الضريبة"} ({sale.taxRate}%)</span>
-            <span className="font-semibold">+ {fmt(taxAmount)} د.ك</span>
+            <span className="font-semibold">+ {fmt(taxAmount)} K.D</span>
           </div>
         )}
 
         <div className="flex justify-between text-sm mb-2 pt-2 border-t border-[var(--border)]">
           <span className="text-[var(--muted)]">الإجمالي الجديد</span>
-          <span className="font-extrabold text-lg">{fmt(total)} د.ك</span>
+          <span className="font-extrabold text-lg">{fmt(total)} K.D</span>
         </div>
-        <Field label="المبلغ المحصل (د.ك)">
+        <Field label="المبلغ المحصل (K.D)">
           <input type="number" min="0" step="0.001" className={inputCls} value={collected} onChange={(e) => setCollected(e.target.value)} />
         </Field>
 
@@ -3529,7 +3529,7 @@ function LabelsPrintArea({ product, count, settings, onClose }) {
               <p style={{ fontSize: 12, fontWeight: 700, margin: 0 }}>{product.name}</p>
               <Code39Barcode value={product.id} height={34} unit={1.4} />
               <p style={{ fontSize: 9, letterSpacing: 1, margin: 0, color: "#555" }}>{product.id.toUpperCase()}</p>
-              <p style={{ fontSize: 14, fontWeight: 800, margin: 0 }}>{fmt(product.price)} د.ك</p>
+              <p style={{ fontSize: 14, fontWeight: 800, margin: 0 }}>{fmt(product.price)} K.D</p>
             </div>
           ))}
         </div>
@@ -3646,8 +3646,8 @@ function InvoiceDoc({ sale, settings }) {
             <tr key={i.lineId}>
               <td style={tdStyle}>{i.name}</td>
               <td style={tdStyle}>{i.qty}</td>
-              <td style={tdStyle}>{fmt(i.price)} د.ك</td>
-              <td style={tdStyle}>{fmt(i.total)} د.ك</td>
+              <td style={tdStyle}>{fmt(i.price)} K.D</td>
+              <td style={tdStyle}>{fmt(i.total)} K.D</td>
             </tr>
           ))}
         </tbody>
@@ -3756,7 +3756,7 @@ function DistributionDoc({ data, settings }) {
             <tr key={p.id}>
               <td style={tdStyle}>{p.name}</td>
               <td style={tdStyle}>{p.percent}%</td>
-              <td style={tdStyle}>{fmt(p.amount)} د.ك</td>
+              <td style={tdStyle}>{fmt(p.amount)} K.D</td>
             </tr>
           ))}
         </tbody>
@@ -3773,7 +3773,7 @@ function TotalRow({ label, value, bold, color }) {
   return (
     <div style={{ display: "flex", justifyContent: "space-between", padding: "6px 0", fontSize: bold ? 15 : 13, fontWeight: bold ? 800 : 600, color: color || "#2B211A" }}>
       <span>{label}</span>
-      <span>{fmt(value)} د.ك</span>
+      <span>{fmt(value)} K.D</span>
     </div>
   );
 }
