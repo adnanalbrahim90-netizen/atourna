@@ -5,7 +5,7 @@ import {
   Menu, Save, Image as ImageIcon, ShoppingCart, Home, AlertTriangle, Eye, EyeOff,
   Sun, Moon, Pencil, Wallet, Tag, MessageSquare, Megaphone, Gift, Ban,
   Wallet2, Calculator, Percent, Droplet, TrendingUp, TrendingDown, ShieldCheck, Bell,
-  Landmark, HandCoins, CalendarRange, Users2, KeyRound
+  Landmark, HandCoins, CalendarRange, Users2, KeyRound, Type
 } from "lucide-react";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
@@ -533,6 +533,7 @@ export default function App() {
   const [profitDistributions, setProfitDistributions] = useState([]); // saved profit-sharing history
   const [dailyBackup, setDailyBackup] = useState(null); // {date, savedAt, data} — auto-overwritten once per day
   const [darkMode, setDarkMode] = useState(false);
+  const [fontScale, setFontScaleState] = useState(1);
   const [toast, setToast] = useState("");
   const [confirmState, setConfirmState] = useState(null); // { message, onConfirm }
 
@@ -661,6 +662,25 @@ export default function App() {
       window.localStorage.setItem("atourna_darkmode", next ? "1" : "0");
       return next;
     });
+  };
+
+  // Font size is also a per-device preference — lets each person enlarge or
+  // shrink the whole app's text to their own comfort, independent of everyone
+  // else. Scaling the root font-size works because all of the app's text
+  // sizes (text-xs/sm/base/lg/xl/2xl/3xl) are rem-based, so they grow or
+  // shrink together proportionally.
+  useEffect(() => {
+    const saved = Number(window.localStorage.getItem("atourna_fontscale"));
+    if (saved && saved > 0) setFontScaleState(saved);
+  }, []);
+
+  useEffect(() => {
+    document.documentElement.style.fontSize = `${16 * fontScale}px`;
+  }, [fontScale]);
+
+  const setFontScale = (scale) => {
+    setFontScaleState(scale);
+    window.localStorage.setItem("atourna_fontscale", String(scale));
   };
 
   const showToast = useCallback((msg) => {
@@ -1166,7 +1186,7 @@ export default function App() {
             <UsersAdmin users={users} onSave={async (next) => { await persistUsers(next); showToast("تم حفظ بيانات المستخدمين بنجاح"); }} onConfirm={askConfirm} currentUser={currentUser} />
           )}
           {view === "settings" && isAdmin && (
-            <SettingsPage settings={settings} onSave={async (next) => { await persistSettings(next); showToast("تم حفظ الإعدادات"); }} />
+            <SettingsPage settings={settings} onSave={async (next) => { await persistSettings(next); showToast("تم حفظ الإعدادات"); }} fontScale={fontScale} onSetFontScale={setFontScale} />
           )}
           {view === "backup" && isAdmin && (
             <BackupPage
@@ -1538,18 +1558,17 @@ function Dashboard({ sales, products, currentUser, setView }) {
 
 function StatCard({ label, value, color, icon: Icon }) {
   return (
-    <Card className="p-4 card-hover">
-      <div className="flex items-start justify-between gap-2.5">
-        <div className="min-w-0 flex-1">
-          <p className="text-[11px] text-[var(--muted)] mb-1.5 leading-snug line-clamp-2">{label}</p>
-          <p dir="ltr" className="text-sm font-extrabold leading-tight whitespace-nowrap text-right" style={{ color }}>{value}</p>
+    <Card className="p-4 card-hover relative overflow-hidden">
+      {Icon && (
+        <div
+          className="absolute top-3 left-3 w-6 h-6 rounded-full flex items-center justify-center"
+          style={{ background: `color-mix(in srgb, ${color} 16%, transparent)` }}
+        >
+          <Icon size={12} style={{ color }} />
         </div>
-        {Icon && (
-          <div className="w-8 h-8 rounded-full flex items-center justify-center shrink-0" style={{ background: `color-mix(in srgb, ${color} 16%, transparent)` }}>
-            <Icon size={15} style={{ color }} />
-          </div>
-        )}
-      </div>
+      )}
+      <p className="text-[11px] text-[var(--muted)] mb-1.5 leading-snug line-clamp-2 pl-7">{label}</p>
+      <p dir="ltr" className="text-sm font-extrabold leading-tight whitespace-nowrap text-right" style={{ color }}>{value}</p>
     </Card>
   );
 }
@@ -2122,9 +2141,9 @@ function Stats({ sales, users, products, currentUser, isAdmin }) {
       </div>
 
       {isAdmin && (
-        <Card className="p-4">
+        <Card className="p-4 text-center">
           <p className="text-xs text-[var(--muted)] mb-1">صافي الربح (بعد خصم سعر التكلفة)</p>
-          <p className={`text-xl sm:text-2xl font-extrabold break-words ${totalProfit >= 0 ? "text-[#3F7D57]" : "text-[#B23A3A]"}`}>{fmt(totalProfit)} K.D</p>
+          <p dir="ltr" className={`text-xl sm:text-2xl font-extrabold whitespace-nowrap ${totalProfit >= 0 ? "text-[#3F7D57]" : "text-[#B23A3A]"}`}>{fmt(totalProfit)} K.D</p>
           <p className="text-xs text-[var(--muted)] mt-1">مرئي للمدير فقط — بناءً على سعر التكلفة المسجَّل لكل منتج</p>
         </Card>
       )}
@@ -2817,14 +2836,12 @@ function AccountingPage({ sales, products, expenses, stockLogs }) {
         <StatCard label="تكلفة البضاعة" value={fmt(cogs) + " K.D"} color="var(--accent-dark)" icon={Package} />
       </div>
 
-      <Card className="p-5">
-        <div className="flex items-center justify-between mb-3">
-          <p className="font-bold flex items-center gap-2">
-            {netProfit >= 0 ? <TrendingUp size={18} className="text-[#3F7D57]" /> : <TrendingDown size={18} className="text-[#B23A3A]" />}
-            صافي الربح الحقيقي
-          </p>
-        </div>
-        <p className={`text-2xl sm:text-3xl font-extrabold break-words ${netProfit >= 0 ? "text-[#3F7D57]" : "text-[#B23A3A]"}`}>{fmt(netProfit)} K.D</p>
+      <Card className="p-5 text-center">
+        <p className="font-bold flex items-center justify-center gap-2 mb-3">
+          {netProfit >= 0 ? <TrendingUp size={18} className="text-[#3F7D57]" /> : <TrendingDown size={18} className="text-[#B23A3A]" />}
+          صافي الربح الحقيقي
+        </p>
+        <p dir="ltr" className={`text-2xl sm:text-3xl font-extrabold whitespace-nowrap ${netProfit >= 0 ? "text-[#3F7D57]" : "text-[#B23A3A]"}`}>{fmt(netProfit)} K.D</p>
         <p className="text-xs text-[var(--muted)] mt-2">= إجمالي المبيعات − تكلفة البضاعة − المصروفات − قيمة الهدايا/التالف/التجربة (بسعر التكلفة)</p>
         <div className="grid grid-cols-3 gap-3 mt-4 pt-4 border-t border-[var(--border)] text-center">
           <div>
@@ -3040,7 +3057,7 @@ function CapitalPartnersPage({
 
         <div className="bg-[var(--surface-3)] rounded-xl p-3 text-center mb-3">
           <p className="text-[11px] text-[var(--muted)]">صافي الربح القابل للتوزيع</p>
-          <p className={`text-xl font-extrabold break-words ${netProfit >= 0 ? "text-[#3F7D57]" : "text-[#B23A3A]"}`}>{fmt(netProfit)} K.D</p>
+          <p dir="ltr" className={`text-xl font-extrabold whitespace-nowrap ${netProfit >= 0 ? "text-[#3F7D57]" : "text-[#B23A3A]"}`}>{fmt(netProfit)} K.D</p>
         </div>
 
         <Btn className="w-full" onClick={calculate} disabled={!percentValid}>
@@ -3093,7 +3110,7 @@ function CapitalPartnersPage({
   );
 }
 
-function SettingsPage({ settings, onSave }) {
+function SettingsPage({ settings, onSave, fontScale, onSetFontScale }) {
   const [form, setForm] = useState(settings);
   const fileRef = useRef(null);
 
@@ -3164,6 +3181,32 @@ function SettingsPage({ settings, onSave }) {
               </button>
             ))}
           </div>
+        </div>
+
+        <div className="pt-3 border-t border-[var(--border)]">
+          <span className="text-xs font-semibold text-[var(--muted)] flex items-center gap-1.5 mb-2"><Type size={14} /> حجم الخط (على هذا الجهاز فقط)</span>
+          <div className="grid grid-cols-4 gap-2">
+            {[
+              { scale: 0.9, label: "صغير" },
+              { scale: 1, label: "عادي" },
+              { scale: 1.1, label: "كبير" },
+              { scale: 1.25, label: "أكبر" },
+            ].map((o) => (
+              <button
+                key={o.scale}
+                type="button"
+                onClick={() => onSetFontScale(o.scale)}
+                className={`rounded-xl border-2 py-2.5 flex flex-col items-center gap-1 transition ${
+                  fontScale === o.scale ? "border-[var(--accent)]" : "border-transparent"
+                }`}
+                style={{ background: "var(--surface-2)" }}
+              >
+                <span className="font-extrabold" style={{ fontSize: `${14 * o.scale}px` }}>أ</span>
+                <span className="text-[10px] font-semibold">{o.label}</span>
+              </button>
+            ))}
+          </div>
+          <p className="text-[11px] text-[var(--muted)] mt-2">يتحكم بحجم النصوص والأرقام بكامل التطبيق على جهازك أنت فقط، ولا يؤثر على أجهزة بقية المستخدمين.</p>
         </div>
 
         <div className="pt-3 border-t border-[var(--border)]">
