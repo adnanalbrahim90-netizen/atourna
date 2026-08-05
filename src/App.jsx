@@ -5,7 +5,8 @@ import {
   Menu, Save, Image as ImageIcon, ShoppingCart, Home, AlertTriangle, Eye, EyeOff,
   Sun, Moon, Pencil, Wallet, Tag, MessageSquare, Megaphone, Gift, Ban,
   Wallet2, Calculator, Percent, Droplet, TrendingUp, TrendingDown, ShieldCheck, Bell,
-  Landmark, HandCoins, CalendarRange, Users2, KeyRound, Type
+  Landmark, HandCoins, CalendarRange, Users2, KeyRound, Type,
+  Trophy, Palette, Medal, Target, Flame, Award, Sparkles
 } from "lucide-react";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
@@ -501,6 +502,8 @@ const NAV_ITEMS = [
   { key: "stats", label: "الإحصائيات", icon: BarChart3, roles: ["admin", "seller"] },
   { key: "inventory", label: "المخزون", icon: Package, roles: ["admin", "seller"] },
   { key: "announcements", label: "التعاميم", icon: Megaphone, roles: ["admin", "seller"] },
+  { key: "challenges", label: "التحديات والإنجازات", icon: Trophy, roles: ["admin", "seller"] },
+  { key: "preferences", label: "تفضيلاتي", icon: Palette, roles: ["admin", "seller"] },
   { key: "expenses", label: "المصروفات", icon: Wallet2, roles: ["admin"] },
   { key: "accounting", label: "المحاسبة", icon: Calculator, roles: ["admin"] },
   { key: "capital", label: "حساب أرباح الشركاء", icon: Landmark, roles: ["admin"] },
@@ -532,6 +535,8 @@ export default function App() {
   const [partners, setPartners] = useState([]);
   const [profitDistributions, setProfitDistributions] = useState([]); // saved profit-sharing history
   const [dailyBackup, setDailyBackup] = useState(null); // {date, savedAt, data} — auto-overwritten once per day
+  const [sellerGoals, setSellerGoals] = useState({}); // { [userId]: monthlyTargetAmount }
+  const [personalTheme, setPersonalThemeState] = useState(""); // per-device theme override, empty = use company theme
   const [darkMode, setDarkMode] = useState(false);
   const [fontScale, setFontScaleState] = useState(1);
   const [toast, setToast] = useState("");
@@ -556,8 +561,9 @@ export default function App() {
     const ex = await storeGet("perfume_expenses", []);
     const pt = await storeGet("perfume_partners", []);
     const pd = await storeGet("perfume_profit_distributions", []);
+    const sg = await storeGet("perfume_seller_goals", {});
 
-    const snapshot = JSON.stringify({ u, p, s, sq, st, an, sl, ex, pt, pd });
+    const snapshot = JSON.stringify({ u, p, s, sq, st, an, sl, ex, pt, pd, sg });
     if (snapshot === lastSnapshot.current) return; // nothing new, avoid needless re-render
     lastSnapshot.current = snapshot;
 
@@ -571,6 +577,7 @@ export default function App() {
     setExpenses(ex);
     setPartners(pt);
     setProfitDistributions(pd);
+    setSellerGoals(sg);
     if (isInitial) setLoading(false);
 
     // Automatic rolling daily backup: one single snapshot, overwritten once
@@ -653,8 +660,22 @@ export default function App() {
   }, [darkMode]);
 
   useEffect(() => {
-    document.documentElement.setAttribute("data-theme", settings.theme || "classic");
-  }, [settings.theme]);
+    document.documentElement.setAttribute("data-theme", personalTheme || settings.theme || "classic");
+  }, [settings.theme, personalTheme]);
+
+  // A personal theme choice is a per-device override only — it never
+  // touches the shared company theme everyone else sees or the printed
+  // invoices, which always follow settings.theme.
+  useEffect(() => {
+    const saved = window.localStorage.getItem("atourna_personal_theme");
+    if (saved) setPersonalThemeState(saved);
+  }, []);
+
+  const setPersonalTheme = (themeKey) => {
+    setPersonalThemeState(themeKey);
+    if (themeKey) window.localStorage.setItem("atourna_personal_theme", themeKey);
+    else window.localStorage.removeItem("atourna_personal_theme");
+  };
 
   const toggleDarkMode = () => {
     setDarkMode((d) => {
@@ -770,6 +791,11 @@ export default function App() {
 
   const persistPartners = async (next) => { setPartners(next); await storeSet("perfume_partners", next); };
   const persistProfitDistributions = async (next) => { setProfitDistributions(next); await storeSet("perfume_profit_distributions", next); };
+  const persistSellerGoals = async (next) => { setSellerGoals(next); await storeSet("perfume_seller_goals", next); };
+  const saveSellerGoal = async (userId, amount) => {
+    await persistSellerGoals({ ...sellerGoals, [userId]: Number(amount) || 0 });
+    showToast("تم حفظ الهدف الشهري");
+  };
 
   const savePartners = async (next) => {
     await persistPartners(next);
@@ -1054,7 +1080,7 @@ export default function App() {
         <main className="no-print flex-1 min-w-0 px-4 py-5 pb-24 md:pb-8">
         <div key={view} className="view-transition">
           {view === "dashboard" && (
-            <Dashboard sales={sales} products={products} currentUser={currentUser} setView={setView} />
+            <Dashboard sales={sales} products={products} users={users} sellerGoals={sellerGoals} currentUser={currentUser} setView={setView} />
           )}
           {view === "newsale" && (
             <NewSale
@@ -1150,6 +1176,27 @@ export default function App() {
               onConfirm={askConfirm}
             />
           )}
+          {view === "challenges" && (
+            <ChallengesPage
+              sales={sales}
+              users={users}
+              currentUser={currentUser}
+              isAdmin={isAdmin}
+              sellerGoals={sellerGoals}
+              onSaveGoal={saveSellerGoal}
+            />
+          )}
+          {view === "preferences" && (
+            <PreferencesPage
+              fontScale={fontScale}
+              onSetFontScale={setFontScale}
+              personalTheme={personalTheme}
+              onSetPersonalTheme={setPersonalTheme}
+              darkMode={darkMode}
+              onToggleDarkMode={toggleDarkMode}
+              companyTheme={settings.theme || "classic"}
+            />
+          )}
           {view === "expenses" && isAdmin && (
             <ExpensesPage
               expenses={expenses}
@@ -1190,14 +1237,14 @@ export default function App() {
           )}
           {view === "backup" && isAdmin && (
             <BackupPage
-              data={{ users, products, sales, seq, settings, announcements, stockLogs, expenses, partners, profitDistributions }}
+              data={{ users, products, sales, seq, settings, announcements, stockLogs, expenses, partners, profitDistributions, sellerGoals }}
               dailyBackup={dailyBackup}
               onRefreshDailyBackup={async () => {
                 const today = new Date().toISOString().slice(0, 10);
                 const snapshot = {
                   date: today,
                   savedAt: todayISO(),
-                  data: { users, products, sales, seq, settings, announcements, stockLogs, expenses, partners, profitDistributions },
+                  data: { users, products, sales, seq, settings, announcements, stockLogs, expenses, partners, profitDistributions, sellerGoals },
                 };
                 await storeSet("perfume_daily_backup", snapshot);
                 setDailyBackup(snapshot);
@@ -1215,6 +1262,7 @@ export default function App() {
                   await persistExpenses(next.expenses || expenses);
                   await persistPartners(next.partners || partners);
                   await persistProfitDistributions(next.profitDistributions || profitDistributions);
+                  await persistSellerGoals(next.sellerGoals || sellerGoals);
                 } else {
                   const mergeById = (a, b) => {
                     const map = new Map(a.map((x) => [x.id, x]));
@@ -1231,6 +1279,7 @@ export default function App() {
                   await persistExpenses(mergeById(expenses, next.expenses));
                   await persistPartners(mergeById(partners, next.partners));
                   await persistProfitDistributions(mergeById(profitDistributions, next.profitDistributions));
+                  await persistSellerGoals({ ...sellerGoals, ...(next.sellerGoals || {}) });
                 }
                 showToast("تمت استعادة البيانات بنجاح");
               }}
@@ -1491,13 +1540,33 @@ function GlobalStyle() {
 
 /* ---------------------------------- Dashboard ---------------------------------- */
 
-function Dashboard({ sales, products, currentUser, setView }) {
+function Dashboard({ sales, products, users, sellerGoals, currentUser, setView }) {
   const isAdmin = currentUser.role === "admin";
   const mySales = sales; // everyone can see overall store sales now
   const totalRevenue = mySales.reduce((a, s) => a + s.total, 0);
   const totalCollected = mySales.reduce((a, s) => a + s.collected, 0);
   const totalRemaining = mySales.reduce((a, s) => a + s.remaining, 0);
   const lowStock = products.filter((p) => p.stock <= (p.minStock ?? 5));
+
+  // This-month leaderboard rank, surfaced here so the gamification is visible
+  // right on the home screen without needing to open the Challenges page.
+  const monthRank = useMemo(() => {
+    const sellers = users.filter((u) => u.role === "seller" || u.role === "admin");
+    const start = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+    const map = new Map();
+    sellers.forEach((u) => map.set(u.id, { id: u.id, name: u.name, collected: 0 }));
+    sales.filter((s) => new Date(s.date) >= start).forEach((s) => {
+      const cur = map.get(s.sellerId);
+      if (cur) cur.collected += s.collected;
+    });
+    const ranked = Array.from(map.values()).sort((a, b) => b.collected - a.collected);
+    const idx = ranked.findIndex((r) => r.id === currentUser.id);
+    return { rank: idx + 1, total: ranked.length, collected: ranked[idx]?.collected || 0 };
+  }, [sales, users, currentUser.id]);
+
+  const myGoal = sellerGoals?.[currentUser.id] || 0;
+  const goalProgress = myGoal > 0 ? Math.min(100, (monthRank.collected / myGoal) * 100) : 0;
+  const medal = monthRank.rank === 1 ? "🥇" : monthRank.rank === 2 ? "🥈" : monthRank.rank === 3 ? "🥉" : null;
 
   return (
     <div className="space-y-5">
@@ -1512,6 +1581,32 @@ function Dashboard({ sales, products, currentUser, setView }) {
         <StatCard label="المحصل" value={fmt(totalCollected) + " K.D"} color="#3F7D57" icon={Wallet} />
         <StatCard label="المتبقي" value={fmt(totalRemaining) + " K.D"} color="#B23A3A" icon={AlertTriangle} />
       </div>
+
+      <button onClick={() => setView("challenges")} className="w-full text-right">
+        <Card className="p-4 card-hover border-2 border-[var(--accent)]/30">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="w-11 h-11 rounded-full flex items-center justify-center shrink-0" style={{ background: `color-mix(in srgb, var(--accent) 18%, transparent)` }}>
+                {medal ? <span className="text-xl">{medal}</span> : <Trophy size={20} className="text-[var(--accent)]" />}
+              </div>
+              <div>
+                <p className="font-bold text-sm flex items-center gap-1.5">
+                  ترتيبك هذا الشهر: #{monthRank.rank || "-"} من {monthRank.total}
+                </p>
+                <p className="text-xs text-[var(--muted)]">{fmt(monthRank.collected)} K.D محصَّلة هذا الشهر · اضغط لعرض التحديات والأوسمة</p>
+              </div>
+            </div>
+          </div>
+          {myGoal > 0 && (
+            <div className="mt-3">
+              <div className="w-full h-2 rounded-full bg-[var(--surface-3)] overflow-hidden">
+                <div className="h-full rounded-full" style={{ width: `${goalProgress}%`, background: "linear-gradient(90deg, var(--accent), var(--accent-dark))" }} />
+              </div>
+              <p className="text-[10px] text-[var(--muted)] mt-1">{goalProgress.toFixed(0)}% من هدفك الشهري ({fmt(myGoal)} K.D)</p>
+            </div>
+          )}
+        </Card>
+      </button>
 
       <div className="grid md:grid-cols-2 gap-4">
         <Card className="p-4">
@@ -2652,7 +2747,263 @@ function AnnouncementsPage({ announcements, isAdmin, onCreate, onDelete, onConfi
   );
 }
 
-/* ---------------------------------- Expenses ---------------------------------- */
+/* ---------------------------------- Shared theme palette ---------------------------------- */
+
+const THEMES = [
+  { key: "classic", label: "ذهبي عنّابي", accent: "#B8894A", dark: "#5B2333" },
+  { key: "emerald", label: "زمردي", accent: "#2F8F6B", dark: "#124430" },
+  { key: "rose", label: "وردي", accent: "#C2547E", dark: "#6B1F3A" },
+  { key: "sapphire", label: "سماوي", accent: "#3B6EA8", dark: "#16324F" },
+  { key: "violet", label: "بنفسجي", accent: "#7B5EA8", dark: "#3E2A5C" },
+  { key: "amber", label: "كهرماني", accent: "#C97B3D", dark: "#7A3E1D" },
+];
+
+/* ---------------------------------- Sellers' Challenge & Achievements ---------------------------------- */
+
+const ACHIEVEMENTS = [
+  { id: "first_sale", label: "أول خطوة", desc: "أول فاتورة مسجَّلة", icon: Sparkles, color: "#3F7D57", check: (s) => s.count >= 1 },
+  { id: "invoices_10", label: "نشيط", desc: "10 فواتير", icon: Flame, color: "var(--accent)", check: (s) => s.count >= 10 },
+  { id: "invoices_50", label: "محترف", desc: "50 فاتورة", icon: Medal, color: "#3B6EA8", check: (s) => s.count >= 50 },
+  { id: "invoices_100", label: "نجم المبيعات", desc: "100 فاتورة", icon: Trophy, color: "#C9A227", check: (s) => s.count >= 100 },
+  { id: "collected_100", label: "100 دينار", desc: "تحصيل 100 K.D فأكثر", icon: Award, color: "#7B5EA8", check: (s) => s.collected >= 100 },
+  { id: "collected_500", label: "500 دينار", desc: "تحصيل 500 K.D فأكثر", icon: Award, color: "#C2547E", check: (s) => s.collected >= 500 },
+  { id: "collected_1000", label: "1000 دينار", desc: "تحصيل 1000 K.D فأكثر", icon: Trophy, color: "#B8894A", check: (s) => s.collected >= 1000 },
+];
+
+function ChallengesPage({ sales, users, currentUser, isAdmin, sellerGoals, onSaveGoal }) {
+  const [period, setPeriod] = useState("month"); // week | month | all
+
+  const sellers = useMemo(() => users.filter((u) => u.role === "seller" || u.role === "admin"), [users]);
+
+  const periodSales = useMemo(() => {
+    if (period === "all") return sales;
+    const now = new Date();
+    let start;
+    if (period === "week") {
+      start = new Date(now);
+      start.setDate(now.getDate() - 6);
+      start.setHours(0, 0, 0, 0);
+    } else {
+      start = new Date(now.getFullYear(), now.getMonth(), 1);
+    }
+    return sales.filter((s) => new Date(s.date) >= start);
+  }, [sales, period]);
+
+  const leaderboard = useMemo(() => {
+    const map = new Map();
+    sellers.forEach((u) => map.set(u.id, { id: u.id, name: u.name, count: 0, collected: 0 }));
+    periodSales.forEach((s) => {
+      const cur = map.get(s.sellerId);
+      if (!cur) return;
+      cur.count += 1;
+      cur.collected += s.collected;
+    });
+    return Array.from(map.values()).sort((a, b) => b.collected - a.collected);
+  }, [periodSales, sellers]);
+
+  // All-time stats per seller for achievement unlocking (achievements shouldn't reset with the period filter above)
+  const allTimeStats = useMemo(() => {
+    const map = new Map();
+    sellers.forEach((u) => map.set(u.id, { id: u.id, name: u.name, count: 0, collected: 0 }));
+    sales.forEach((s) => {
+      const cur = map.get(s.sellerId);
+      if (!cur) return;
+      cur.count += 1;
+      cur.collected += s.collected;
+    });
+    return map;
+  }, [sales, sellers]);
+
+  const myStats = allTimeStats.get(currentUser.id) || { count: 0, collected: 0 };
+  const myGoal = sellerGoals[currentUser.id] || 0;
+  const myPeriodCollected = leaderboard.find((l) => l.id === currentUser.id)?.collected || 0;
+  const goalProgress = myGoal > 0 ? Math.min(100, (myPeriodCollected / myGoal) * 100) : 0;
+
+  const medal = (rank) => (rank === 0 ? "🥇" : rank === 1 ? "🥈" : rank === 2 ? "🥉" : null);
+
+  const [goalInput, setGoalInput] = useState(String(myGoal || ""));
+
+  return (
+    <div className="space-y-5">
+      <h2 className="text-xl font-bold flex items-center gap-2"><Trophy size={20} /> التحديات والإنجازات</h2>
+      <p className="text-xs text-[var(--muted)] -mt-3">لوحة صدارة البائعين حسب المبلغ المحصَّل، مع أوسمة إنجاز تُفتح تلقائياً كلما تقدّمت في عملك.</p>
+
+      {myGoal > 0 && (
+        <Card className="p-4">
+          <div className="flex items-center justify-between mb-2">
+            <p className="font-bold flex items-center gap-2"><Target size={16} className="text-[var(--accent)]" /> هدفي هذا الشهر</p>
+            <p className="text-sm font-bold">{fmt(myPeriodCollected)} / {fmt(myGoal)} K.D</p>
+          </div>
+          <div className="w-full h-3 rounded-full bg-[var(--surface-3)] overflow-hidden">
+            <div
+              className="h-full rounded-full transition-all"
+              style={{ width: `${goalProgress}%`, background: "linear-gradient(90deg, var(--accent), var(--accent-dark))" }}
+            />
+          </div>
+          <p className="text-[11px] text-[var(--muted)] mt-1.5">{goalProgress.toFixed(0)}% من الهدف الشهري محقَّق</p>
+        </Card>
+      )}
+
+      <Card className="p-4">
+        <div className="flex gap-2 mb-4">
+          {[["week", "هذا الأسبوع"], ["month", "هذا الشهر"], ["all", "كل الوقت"]].map(([key, label]) => (
+            <button
+              key={key}
+              onClick={() => setPeriod(key)}
+              className={`flex-1 py-2 rounded-lg text-xs font-semibold transition ${period === key ? "bg-[var(--accent)] text-white" : "bg-[var(--surface-2)] text-[var(--muted)]"}`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+
+        <div className="space-y-2">
+          {leaderboard.map((s, i) => (
+            <div
+              key={s.id}
+              className={`flex items-center justify-between rounded-xl px-3 py-2.5 ${s.id === currentUser.id ? "bg-[var(--surface-3)] border border-[var(--accent)]" : "bg-[var(--surface-2)]"}`}
+            >
+              <div className="flex items-center gap-2.5">
+                <span className="w-7 text-center font-extrabold text-sm">{medal(i) || `#${i + 1}`}</span>
+                <div>
+                  <p className="text-sm font-semibold">{s.name}{s.id === currentUser.id ? " (أنت)" : ""}</p>
+                  <p className="text-[10px] text-[var(--muted)]">{s.count} فاتورة</p>
+                </div>
+              </div>
+              <p dir="ltr" className="font-bold text-[var(--accent-dark)] whitespace-nowrap">{fmt(s.collected)} K.D</p>
+            </div>
+          ))}
+          {leaderboard.length === 0 && <EmptyState text="لا توجد بيانات لهذه الفترة بعد" />}
+        </div>
+      </Card>
+
+      <div>
+        <h3 className="font-bold mb-3 flex items-center gap-2"><Award size={18} /> أوسمتي</h3>
+        <div className="grid grid-cols-2 sm:grid-cols-3 gap-2.5">
+          {ACHIEVEMENTS.map((a) => {
+            const unlocked = a.check(myStats);
+            const Icon = a.icon;
+            return (
+              <Card key={a.id} className={`p-3 text-center ${!unlocked ? "opacity-40 grayscale" : "card-hover"}`}>
+                <div
+                  className="w-11 h-11 rounded-full flex items-center justify-center mx-auto mb-2"
+                  style={{ background: `color-mix(in srgb, ${a.color} 18%, transparent)` }}
+                >
+                  <Icon size={20} style={{ color: a.color }} />
+                </div>
+                <p className="text-xs font-bold">{a.label}</p>
+                <p className="text-[10px] text-[var(--muted)]">{a.desc}</p>
+              </Card>
+            );
+          })}
+        </div>
+      </div>
+
+      {isAdmin && (
+        <Card className="p-4">
+          <h3 className="font-bold mb-3">تحديد هدف شهري لكل بائع</h3>
+          <div className="space-y-2">
+            {sellers.map((u) => (
+              <div key={u.id} className="flex items-center gap-2">
+                <p className="text-sm flex-1">{u.name}</p>
+                <input
+                  type="number"
+                  min="0"
+                  step="1"
+                  className={inputCls + " w-28 !py-1.5 text-xs"}
+                  placeholder="بدون هدف"
+                  defaultValue={sellerGoals[u.id] || ""}
+                  onBlur={(e) => onSaveGoal(u.id, e.target.value)}
+                />
+                <span className="text-[11px] text-[var(--muted)] w-8">K.D</span>
+              </div>
+            ))}
+          </div>
+          <p className="text-[11px] text-[var(--muted)] mt-2">اكتب المبلغ واضغط خارج الحقل للحفظ. اتركه فارغاً لإلغاء الهدف.</p>
+        </Card>
+      )}
+    </div>
+  );
+}
+
+/* ---------------------------------- Personal Preferences (all roles) ---------------------------------- */
+
+function PreferencesPage({ fontScale, onSetFontScale, personalTheme, onSetPersonalTheme, darkMode, onToggleDarkMode, companyTheme }) {
+  const effectiveTheme = personalTheme || companyTheme;
+
+  return (
+    <div className="space-y-5 max-w-xl">
+      <h2 className="text-xl font-bold flex items-center gap-2"><Palette size={20} /> تفضيلاتي</h2>
+      <p className="text-xs text-[var(--muted)] -mt-3">هذه الإعدادات خاصة بجهازك أنت فقط، ولا تؤثر على ما يراه بقية المستخدمين.</p>
+
+      <Card className="p-4">
+        <div className="flex items-center justify-between mb-1">
+          <span className="text-xs font-semibold text-[var(--muted)] flex items-center gap-1.5"><Moon size={14} /> الوضع الداكن</span>
+          <button
+            type="button"
+            onClick={onToggleDarkMode}
+            className={`w-11 h-6 rounded-full relative transition ${darkMode ? "bg-[var(--accent)]" : "bg-[var(--border)]"}`}
+          >
+            <span className={`absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-all ${darkMode ? "right-0.5" : "right-5"}`} />
+          </button>
+        </div>
+      </Card>
+
+      <Card className="p-4">
+        <span className="text-xs font-semibold text-[var(--muted)] flex items-center gap-1.5 mb-2"><Type size={14} /> حجم الخط</span>
+        <div className="grid grid-cols-4 gap-2">
+          {[
+            { scale: 0.9, label: "صغير" },
+            { scale: 1, label: "عادي" },
+            { scale: 1.1, label: "كبير" },
+            { scale: 1.25, label: "أكبر" },
+          ].map((o) => (
+            <button
+              key={o.scale}
+              type="button"
+              onClick={() => onSetFontScale(o.scale)}
+              className={`rounded-xl border-2 py-2.5 flex flex-col items-center gap-1 transition ${fontScale === o.scale ? "border-[var(--accent)]" : "border-transparent"}`}
+              style={{ background: "var(--surface-2)" }}
+            >
+              <span className="font-extrabold" style={{ fontSize: `${14 * o.scale}px` }}>أ</span>
+              <span className="text-[10px] font-semibold">{o.label}</span>
+            </button>
+          ))}
+        </div>
+      </Card>
+
+      <Card className="p-4">
+        <span className="text-xs font-semibold text-[var(--muted)] flex items-center gap-1.5 mb-2"><Palette size={14} /> ثيمي الشخصي</span>
+        <div className="grid grid-cols-3 gap-2">
+          <button
+            type="button"
+            onClick={() => onSetPersonalTheme("")}
+            className={`rounded-xl border-2 p-2.5 flex flex-col items-center gap-1.5 transition ${!personalTheme ? "border-[var(--accent)]" : "border-transparent"}`}
+            style={{ background: "var(--surface-2)" }}
+          >
+            <span className="text-[11px] font-semibold">ثيم الشركة</span>
+          </button>
+          {THEMES.map((t) => (
+            <button
+              key={t.key}
+              type="button"
+              onClick={() => onSetPersonalTheme(t.key)}
+              className={`rounded-xl border-2 p-2.5 flex flex-col items-center gap-1.5 transition ${effectiveTheme === t.key && personalTheme ? "border-[var(--accent)]" : "border-transparent"}`}
+              style={{ background: "var(--surface-2)" }}
+            >
+              <span className="flex gap-1">
+                <span className="w-5 h-5 rounded-full" style={{ background: t.accent }} />
+                <span className="w-5 h-5 rounded-full" style={{ background: t.dark }} />
+              </span>
+              <span className="text-[11px] font-semibold">{t.label}</span>
+            </button>
+          ))}
+        </div>
+        <p className="text-[11px] text-[var(--muted)] mt-2">اختر "ثيم الشركة" للرجوع لألوان النظام الافتراضية التي يحددها المدير.</p>
+      </Card>
+    </div>
+  );
+}
 
 const EXPENSE_CATEGORIES = [
   "شراء بضاعة",
@@ -3113,15 +3464,6 @@ function CapitalPartnersPage({
 function SettingsPage({ settings, onSave, fontScale, onSetFontScale }) {
   const [form, setForm] = useState(settings);
   const fileRef = useRef(null);
-
-  const THEMES = [
-    { key: "classic", label: "ذهبي عنّابي", accent: "#B8894A", dark: "#5B2333" },
-    { key: "emerald", label: "زمردي", accent: "#2F8F6B", dark: "#124430" },
-    { key: "rose", label: "وردي", accent: "#C2547E", dark: "#6B1F3A" },
-    { key: "sapphire", label: "سماوي", accent: "#3B6EA8", dark: "#16324F" },
-    { key: "violet", label: "بنفسجي", accent: "#7B5EA8", dark: "#3E2A5C" },
-    { key: "amber", label: "كهرماني", accent: "#C97B3D", dark: "#7A3E1D" },
-  ];
 
   const handleLogo = (e) => {
     const file = e.target.files?.[0];
