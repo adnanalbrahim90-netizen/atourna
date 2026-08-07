@@ -6,7 +6,7 @@ import {
   Sun, Moon, Pencil, Wallet, Tag, MessageSquare, Megaphone, Gift, Ban,
   Wallet2, Calculator, Percent, Droplet, TrendingUp, TrendingDown, ShieldCheck, Bell,
   Landmark, HandCoins, CalendarRange, Users2, KeyRound, Type,
-  Trophy, Palette, Medal, Target, Flame, Award, Sparkles
+  Trophy, Palette, Medal, Target, Flame, Award, Sparkles, Grid3x3
 } from "lucide-react";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
@@ -1044,7 +1044,7 @@ export default function App() {
 
       <div className="max-w-6xl mx-auto md:flex">
         {/* Sidebar (desktop) */}
-        <aside className="no-print hidden md:flex md:flex-col md:w-56 shrink-0 border-l border-[var(--border)] py-4 px-2 gap-1 min-h-[calc(100vh-61px)]">
+        <aside className="no-print hidden md:flex md:flex-col md:w-56 shrink-0 border-l border-[var(--border)] py-4 px-2 gap-1 sticky top-[61px] h-[calc(100vh-61px)] overflow-y-auto">
           {visibleNav.map((n) => (
             <NavBtn key={n.key} item={n} active={view === n.key} onClick={() => setView(n.key)} />
           ))}
@@ -1054,8 +1054,11 @@ export default function App() {
         {mobileNavOpen && (
           <div className="no-print fixed inset-0 z-40 md:hidden">
             <div className="absolute inset-0 bg-black/30" onClick={() => setMobileNavOpen(false)} />
-            <div className="absolute right-0 top-0 bottom-0 w-64 bg-[var(--surface)] shadow-xl p-3 flex flex-col gap-1">
-              <div className="flex items-center justify-between px-2 py-2 mb-2">
+            <div
+              className="absolute right-0 top-0 bottom-0 w-64 max-w-[80vw] bg-[var(--surface)] shadow-xl p-3 flex flex-col gap-1 overflow-y-auto overscroll-contain"
+              style={{ maxHeight: "100vh", WebkitOverflowScrolling: "touch" }}
+            >
+              <div className="flex items-center justify-between px-2 py-2 mb-2 sticky top-0 bg-[var(--surface)] z-10">
                 <div className="flex items-center gap-2">
                   <PerfumeMark size={28} />
                   <span className="font-bold text-[var(--accent-dark)]" style={{ fontFamily: "'Amiri', serif" }}>عطورنا</span>
@@ -1072,6 +1075,7 @@ export default function App() {
                   onClick={() => { setView(n.key); setMobileNavOpen(false); }}
                 />
               ))}
+              <div className="h-2 shrink-0" />
             </div>
           </div>
         )}
@@ -1689,6 +1693,13 @@ function NewSale({ products, users, currentUser, sales, seq, settings, onCreate 
   const [collected, setCollected] = useState("");
   const [discountType, setDiscountType] = useState("amount"); // 'amount' | 'percent'
   const [discountValue, setDiscountValue] = useState("");
+  const [tileSize, setTileSizeState] = useState(() => window.localStorage.getItem("atourna_pos_tilesize") || "md");
+  const [posSearch, setPosSearch] = useState("");
+
+  const setTileSize = (size) => {
+    setTileSizeState(size);
+    window.localStorage.setItem("atourna_pos_tilesize", size);
+  };
 
   const seller = users.find((u) => u.id === sellerId) || currentUser;
   const selectedProduct = products.find((p) => p.id === productId);
@@ -1696,6 +1707,26 @@ function NewSale({ products, users, currentUser, sales, seq, settings, onCreate 
   useEffect(() => {
     if (selectedProduct) setUnitPrice(String(selectedProduct.price));
   }, [productId]); // eslint-disable-line
+
+  const cartQtyFor = (pid) => cart.filter((c) => c.productId === pid).reduce((a, c) => a + c.qty, 0);
+
+  // Tap a product tile: adds one unit at its default price, merging into an
+  // existing cart line for the same product+price instead of creating a new
+  // one, so repeated taps just bump the quantity — this is the fast
+  // point-of-sale-style add path.
+  const addTileToCart = (product) => {
+    const available = product.stock - cartQtyFor(product.id);
+    if (available <= 0) return;
+    setCart((c) => {
+      const idx = c.findIndex((l) => l.productId === product.id && l.price === product.price);
+      if (idx !== -1) {
+        const next = [...c];
+        next[idx] = { ...next[idx], qty: next[idx].qty + 1, total: (next[idx].qty + 1) * next[idx].price };
+        return next;
+      }
+      return [...c, { lineId: uid(), productId: product.id, name: product.name, qty: 1, price: product.price, total: product.price }];
+    });
+  };
 
   const addToCart = () => {
     if (!selectedProduct) return;
@@ -1761,6 +1792,13 @@ function NewSale({ products, users, currentUser, sales, seq, settings, onCreate 
     setDiscountValue("");
   };
 
+  const filteredProducts = products.filter((p) => p.name.toLowerCase().includes(posSearch.trim().toLowerCase()));
+  const tileGridCls = { sm: "grid-cols-4 sm:grid-cols-6", md: "grid-cols-3 sm:grid-cols-4", lg: "grid-cols-2 sm:grid-cols-3" }[tileSize];
+  const tileBoxCls = { sm: "aspect-square p-1.5", md: "aspect-square p-2.5", lg: "aspect-[4/3] p-4" }[tileSize];
+  const tileIconPx = { sm: 20, md: 28, lg: 40 }[tileSize];
+  const tileNameCls = { sm: "text-[9px]", md: "text-[11px]", lg: "text-sm" }[tileSize];
+  const tilePriceCls = { sm: "text-[9px]", md: "text-[10px]", lg: "text-xs" }[tileSize];
+
   return (
     <div className="space-y-5 max-w-2xl">
       <h2 className="text-xl font-bold">تسجيل عملية بيع جديدة</h2>
@@ -1773,7 +1811,73 @@ function NewSale({ products, users, currentUser, sales, seq, settings, onCreate 
             ))}
           </select>
         </Field>
+      </Card>
 
+      {/* POS-style tap-to-add product grid */}
+      <Card className="p-4">
+        <div className="flex items-center justify-between mb-3 gap-2">
+          <h3 className="font-bold flex items-center gap-2 shrink-0"><Grid3x3 size={18} /> نقطة البيع السريعة</h3>
+          <div className="flex items-center gap-1 bg-[var(--surface-2)] rounded-lg p-1 shrink-0">
+            {[["sm", "صغير"], ["md", "متوسط"], ["lg", "كبير"]].map(([key, label]) => (
+              <button
+                key={key}
+                onClick={() => setTileSize(key)}
+                title={label}
+                className={`px-2 py-1 rounded-md text-[10px] font-semibold transition ${tileSize === key ? "bg-[var(--accent)] text-white" : "text-[var(--muted)]"}`}
+              >
+                {key === "sm" ? "S" : key === "md" ? "M" : "L"}
+              </button>
+            ))}
+          </div>
+        </div>
+
+        <div className="relative mb-3">
+          <Search size={15} className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--muted)]" />
+          <input className={inputCls + " pr-9 !py-2"} placeholder="بحث عن منتج..." value={posSearch} onChange={(e) => setPosSearch(e.target.value)} />
+        </div>
+
+        {filteredProducts.length === 0 ? (
+          <EmptyState text="لا توجد منتجات مطابقة" />
+        ) : (
+          <div className={`grid ${tileGridCls} gap-2`}>
+            {filteredProducts.map((p, i) => {
+              const available = p.stock - cartQtyFor(p.id);
+              const inCartQty = cartQtyFor(p.id);
+              const disabled = available <= 0;
+              const tileColor = COLORS[i % COLORS.length];
+              return (
+                <button
+                  key={p.id}
+                  onClick={() => addTileToCart(p)}
+                  disabled={disabled}
+                  className={`relative rounded-2xl border-2 flex flex-col items-center justify-center text-center transition ${tileBoxCls} ${
+                    disabled ? "opacity-40 grayscale border-[var(--border)]" : "border-[var(--border)] hover:border-[var(--accent)] hover:-translate-y-0.5 active:scale-95"
+                  }`}
+                  style={{ background: "var(--surface-2)" }}
+                >
+                  {inCartQty > 0 && (
+                    <span className="absolute -top-1.5 -left-1.5 bg-[var(--accent)] text-white text-[10px] font-bold rounded-full w-5 h-5 flex items-center justify-center shadow fade-in">
+                      {inCartQty}
+                    </span>
+                  )}
+                  <div
+                    className="rounded-full flex items-center justify-center mb-1 shrink-0"
+                    style={{ width: tileIconPx + 16, height: tileIconPx + 16, background: `color-mix(in srgb, ${tileColor} 20%, transparent)` }}
+                  >
+                    <Droplet size={tileIconPx} style={{ color: tileColor }} />
+                  </div>
+                  <p className={`font-bold leading-tight line-clamp-2 ${tileNameCls}`}>{p.name}</p>
+                  {tileSize !== "sm" && <p className={`text-[var(--muted)] ${tilePriceCls}`} dir="ltr">{fmt(p.price)} K.D</p>}
+                </button>
+              );
+            })}
+          </div>
+        )}
+        <p className="text-[11px] text-[var(--muted)] mt-3">اضغط على أي منتج لإضافته مباشرة، والضغط المتكرر يزيد الكمية تلقائياً.</p>
+      </Card>
+
+      <Card className="p-4 space-y-4">
+        <h3 className="font-bold text-sm text-[var(--muted)]">إضافة يدوية (لسعر أو كمية مخصصة)</h3>
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
           <div className="col-span-2 md:col-span-2">
             <Field label="المنتج">
