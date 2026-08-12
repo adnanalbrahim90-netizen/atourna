@@ -1,3 +1,4 @@
+import ExcelJS from "exceljs";
 import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import {
   Plus, Trash2, Printer, Download, Upload, LogOut, Package, Receipt,
@@ -88,25 +89,130 @@ function markAnnouncementSeen(userId, announcementId) {
   window.localStorage.setItem(`atourna_seen_announcements_${userId}`, JSON.stringify(Array.from(seen)));
 }
 
-function exportSalesCsv(label, list) {
-  const header = ["رقم الفاتورة", "البائع", "التاريخ", "المنتجات", "الإجمالي", "المحصل", "المتبقي"];
-  const rows = list.map((s) => [
-    s.invoiceNo,
-    s.sellerName,
-    dateLabel(s.date),
-    s.items.map((i) => `${i.name} (${i.qty})`).join(" / "),
-    s.total.toFixed(3),
-    s.collected.toFixed(3),
-    s.remaining.toFixed(3),
-  ]);
-  const csv = [header, ...rows]
-    .map((row) => row.map((cell) => `"${String(cell).replace(/"/g, '""')}"`).join(","))
-    .join("\r\n");
-  const blob = new Blob(["\uFEFF" + csv], { type: "text/csv;charset=utf-8;" });
+async function exportSalesExcel(label, list, companyName) {
+  const workbook = new ExcelJS.Workbook();
+  workbook.creator = companyName || "عطورنا";
+  workbook.created = new Date();
+
+  const sheet = workbook.addWorksheet("سجل المبيعات", {
+    views: [{ rightToLeft: true, state: "frozen", ySplit: 4 }],
+    pageSetup: { orientation: "landscape", fitToPage: true, fitToWidth: 1 },
+  });
+
+  // Brand palette
+  const ACCENT = "B8894A";
+  const ACCENT_DARK = "5B2333";
+  const CREAM = "FBF3E7";
+  const STRIPE = "F7F1E6";
+  const BORDER_COLOR = "E3D6BE";
+  const GREEN = "3F7D57";
+  const RED = "B23A3A";
+
+  const thinBorder = { style: "thin", color: { argb: "FF" + BORDER_COLOR } };
+  const fullBorder = { top: thinBorder, left: thinBorder, bottom: thinBorder, right: thinBorder };
+
+  const columns = [
+    { header: "رقم الفاتورة", key: "invoiceNo", width: 16 },
+    { header: "البائع", key: "seller", width: 16 },
+    { header: "التاريخ", key: "date", width: 13 },
+    { header: "المنتجات", key: "items", width: 42 },
+    { header: "الإجمالي (K.D)", key: "total", width: 15 },
+    { header: "المحصَّل (K.D)", key: "collected", width: 15 },
+    { header: "المتبقي (K.D)", key: "remaining", width: 15 },
+  ];
+  sheet.columns = columns.map((c) => ({ key: c.key, width: c.width }));
+
+  // --- Title banner (merged) ---
+  sheet.mergeCells(1, 1, 1, columns.length);
+  const titleCell = sheet.getCell(1, 1);
+  titleCell.value = `${companyName || "عطورنا"} — سجل مبيعات: ${label}`;
+  titleCell.font = { name: "Arial", size: 16, bold: true, color: { argb: "FFFFFFFF" } };
+  titleCell.alignment = { horizontal: "center", vertical: "middle" };
+  titleCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF" + ACCENT_DARK } };
+  sheet.getRow(1).height = 30;
+
+  // --- Subtitle (export date + record count) ---
+  sheet.mergeCells(2, 1, 2, columns.length);
+  const subCell = sheet.getCell(2, 1);
+  subCell.value = `تاريخ التصدير: ${dateLabel(todayISO())}  ·  عدد الفواتير: ${list.length}`;
+  subCell.font = { name: "Arial", size: 11, italic: true, color: { argb: "FF" + ACCENT_DARK } };
+  subCell.alignment = { horizontal: "center", vertical: "middle" };
+  subCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF" + CREAM } };
+  sheet.getRow(2).height = 20;
+
+  // spacer row
+  sheet.getRow(3).height = 4;
+
+  // --- Header row ---
+  const headerRowIdx = 4;
+  const headerRow = sheet.getRow(headerRowIdx);
+  columns.forEach((c, i) => {
+    const cell = headerRow.getCell(i + 1);
+    cell.value = c.header;
+    cell.font = { name: "Arial", size: 12, bold: true, color: { argb: "FFFFFFFF" } };
+    cell.alignment = { horizontal: "center", vertical: "middle", wrapText: true };
+    cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF" + ACCENT } };
+    cell.border = fullBorder;
+  });
+  headerRow.height = 24;
+
+  // --- Data rows (zebra striping) ---
+  list.forEach((s, idx) => {
+    const rowIdx = headerRowIdx + 1 + idx;
+    const row = sheet.getRow(rowIdx);
+    const values = [
+      s.invoiceNo,
+      s.sellerName,
+      dateLabel(s.date),
+      s.items.map((i) => `${i.name} (${i.qty})`).join("، "),
+      Number(s.total.toFixed(3)),
+      Number(s.collected.toFixed(3)),
+      Number(s.remaining.toFixed(3)),
+    ];
+    values.forEach((v, i) => {
+      const cell = row.getCell(i + 1);
+      cell.value = v;
+      cell.font = { name: "Arial", size: 11, color: { argb: i === 5 ? "FF" + GREEN : i === 6 && s.remaining > 0 ? "FF" + RED : "FF2B211A" }, bold: i >= 4 };
+      cell.alignment = { horizontal: i >= 4 ? "center" : i === 3 ? "right" : "center", vertical: "middle", wrapText: i === 3 };
+      cell.border = fullBorder;
+      if (i >= 4) cell.numFmt = "#,##0.000";
+      if (idx % 2 === 1) {
+        cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF" + STRIPE } };
+      }
+    });
+  });
+
+  // --- Totals row (formula-based, never hardcoded) ---
+  const totalsRowIdx = headerRowIdx + 1 + list.length;
+  const totalsRow = sheet.getRow(totalsRowIdx);
+  const firstData = headerRowIdx + 1;
+  const lastData = totalsRowIdx - 1;
+  const labelCell = totalsRow.getCell(1);
+  sheet.mergeCells(totalsRowIdx, 1, totalsRowIdx, 4);
+  labelCell.value = "الإجمالي";
+  labelCell.font = { name: "Arial", size: 12, bold: true, color: { argb: "FFFFFFFF" } };
+  labelCell.alignment = { horizontal: "center", vertical: "middle" };
+  labelCell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF" + ACCENT_DARK } };
+  labelCell.border = fullBorder;
+  ["E", "F", "G"].forEach((col, i) => {
+    const cell = totalsRow.getCell(5 + i);
+    cell.value = list.length > 0 ? { formula: `SUM(${col}${firstData}:${col}${lastData})` } : 0;
+    cell.numFmt = "#,##0.000";
+    cell.font = { name: "Arial", size: 12, bold: true, color: { argb: "FFFFFFFF" } };
+    cell.alignment = { horizontal: "center", vertical: "middle" };
+    cell.fill = { type: "pattern", pattern: "solid", fgColor: { argb: "FF" + ACCENT_DARK } };
+    cell.border = fullBorder;
+  });
+  totalsRow.height = 24;
+
+  sheet.autoFilter = { from: { row: headerRowIdx, column: 1 }, to: { row: headerRowIdx, column: columns.length } };
+
+  const buffer = await workbook.xlsx.writeBuffer();
+  const blob = new Blob([buffer], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" });
   const url = URL.createObjectURL(blob);
   const a = document.createElement("a");
   a.href = url;
-  a.download = `سجل-مبيعات-${label}-${new Date().toISOString().slice(0, 10)}.csv`;
+  a.download = `سجل-مبيعات-${label}-${new Date().toISOString().slice(0, 10)}.xlsx`;
   document.body.appendChild(a);
   a.click();
   a.remove();
@@ -520,7 +626,7 @@ export default function App() {
   const [products, setProducts] = useState([]);
   const [sales, setSales] = useState([]);
   const [seq, setSeq] = useState({});
-  const [settings, setSettings] = useState({ companyName: "عطورنا للعطور والبخور", logo: "", phone: "", address: "", theme: "classic", taxEnabled: false, taxRate: 5, taxLabel: "ضريبة القيمة المضافة" });
+  const [settings, setSettings] = useState({ companyName: "عطورنا للعطور والبخور", logo: "", phone: "", address: "", theme: "classic", cardStyle: "classic", taxEnabled: false, taxRate: 5, taxLabel: "ضريبة القيمة المضافة" });
   const [currentUser, setCurrentUser] = useState(null);
   const [view, setView] = useState("dashboard");
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
@@ -537,6 +643,8 @@ export default function App() {
   const [dailyBackup, setDailyBackup] = useState(null); // {date, savedAt, data} — auto-overwritten once per day
   const [sellerGoals, setSellerGoals] = useState({}); // { [userId]: monthlyTargetAmount }
   const [personalTheme, setPersonalThemeState] = useState(""); // per-device theme override, empty = use company theme
+  const activeTheme = personalTheme || settings.theme || "classic";
+  const [personalCardStyle, setPersonalCardStyleState] = useState(""); // per-device card-style override, empty = use company style
   const [darkMode, setDarkMode] = useState(false);
   const [fontScale, setFontScaleState] = useState(1);
   const [toast, setToast] = useState("");
@@ -555,7 +663,7 @@ export default function App() {
     const p = await storeGet("perfume_products", []);
     const s = await storeGet("perfume_sales", []);
     const sq = await storeGet("perfume_seq", {});
-    const st = await storeGet("perfume_settings", { companyName: "عطورنا للعطور والبخور", logo: "", phone: "", address: "", theme: "classic", taxEnabled: false, taxRate: 5, taxLabel: "ضريبة القيمة المضافة" });
+    const st = await storeGet("perfume_settings", { companyName: "عطورنا للعطور والبخور", logo: "", phone: "", address: "", theme: "classic", cardStyle: "classic", taxEnabled: false, taxRate: 5, taxLabel: "ضريبة القيمة المضافة" });
     const an = await storeGet("perfume_announcements", []);
     const sl = await storeGet("perfume_stock_logs", []);
     const ex = await storeGet("perfume_expenses", []);
@@ -663,6 +771,10 @@ export default function App() {
     document.documentElement.setAttribute("data-theme", personalTheme || settings.theme || "classic");
   }, [settings.theme, personalTheme]);
 
+  useEffect(() => {
+    document.documentElement.setAttribute("data-style", personalCardStyle || settings.cardStyle || "classic");
+  }, [settings.cardStyle, personalCardStyle]);
+
   // A personal theme choice is a per-device override only — it never
   // touches the shared company theme everyone else sees or the printed
   // invoices, which always follow settings.theme.
@@ -675,6 +787,19 @@ export default function App() {
     setPersonalThemeState(themeKey);
     if (themeKey) window.localStorage.setItem("atourna_personal_theme", themeKey);
     else window.localStorage.removeItem("atourna_personal_theme");
+  };
+
+  // Same per-device override pattern, but for the overall card/visual style
+  // (classic / gems / vibrant / pastel) instead of just the accent color.
+  useEffect(() => {
+    const saved = window.localStorage.getItem("atourna_personal_style");
+    if (saved) setPersonalCardStyleState(saved);
+  }, []);
+
+  const setPersonalCardStyle = (styleKey) => {
+    setPersonalCardStyleState(styleKey);
+    if (styleKey) window.localStorage.setItem("atourna_personal_style", styleKey);
+    else window.localStorage.removeItem("atourna_personal_style");
   };
 
   const toggleDarkMode = () => {
@@ -1084,7 +1209,7 @@ export default function App() {
         <main className="no-print flex-1 min-w-0 px-4 py-5 pb-24 md:pb-8">
         <div key={view} className="view-transition">
           {view === "dashboard" && (
-            <Dashboard sales={sales} products={products} users={users} sellerGoals={sellerGoals} currentUser={currentUser} setView={setView} />
+            <Dashboard sales={sales} products={products} users={users} sellerGoals={sellerGoals} currentUser={currentUser} setView={setView} activeTheme={activeTheme} />
           )}
           {view === "newsale" && (
             <NewSale
@@ -1110,6 +1235,7 @@ export default function App() {
               users={users}
               currentUser={currentUser}
               isAdmin={isAdmin}
+              settings={settings}
               onDelete={async (id) => {
                 const sale = sales.find((s) => s.id === id);
                 if (!sale) return;
@@ -1158,7 +1284,7 @@ export default function App() {
               onConfirm={askConfirm}
             />
           )}
-          {view === "stats" && <Stats sales={sales} users={users} products={products} currentUser={currentUser} isAdmin={isAdmin} />}
+          {view === "stats" && <Stats sales={sales} users={users} products={products} currentUser={currentUser} isAdmin={isAdmin} activeTheme={activeTheme} />}
           {view === "inventory" && (
             <Inventory
               products={products}
@@ -1169,6 +1295,7 @@ export default function App() {
               onLogAdjustment={logStockAdjustment}
               onDeleteLog={deleteStockLog}
               onConfirm={askConfirm}
+              activeTheme={activeTheme}
             />
           )}
           {view === "announcements" && (
@@ -1196,9 +1323,12 @@ export default function App() {
               onSetFontScale={setFontScale}
               personalTheme={personalTheme}
               onSetPersonalTheme={setPersonalTheme}
+              personalCardStyle={personalCardStyle}
+              onSetPersonalCardStyle={setPersonalCardStyle}
               darkMode={darkMode}
               onToggleDarkMode={toggleDarkMode}
               companyTheme={settings.theme || "classic"}
+              companyCardStyle={settings.cardStyle || "classic"}
             />
           )}
           {view === "expenses" && isAdmin && (
@@ -1207,6 +1337,7 @@ export default function App() {
               onAdd={addExpense}
               onDelete={deleteExpense}
               onConfirm={askConfirm}
+              activeTheme={activeTheme}
             />
           )}
           {view === "accounting" && isAdmin && (
@@ -1215,6 +1346,7 @@ export default function App() {
               products={products}
               expenses={expenses}
               stockLogs={stockLogs}
+              activeTheme={activeTheme}
             />
           )}
           {view === "capital" && isAdmin && (
@@ -1477,9 +1609,15 @@ function GlobalStyle() {
       html[data-theme="sapphire"] { --accent: #3B6EA8; --accent-dark: #16324F; }
       html[data-theme="violet"] { --accent: #7B5EA8; --accent-dark: #3E2A5C; }
       html[data-theme="amber"] { --accent: #C97B3D; --accent-dark: #7A3E1D; }
+      html[data-theme="gem"] { --accent: #C9A227; --accent-dark: #4A2C1D; --bg: linear-gradient(160deg, #EFE1C4 0%, #DCC291 45%, #C9AE87 100%); }
+      html[data-theme="candy"] { --accent: #12A594; --accent-dark: #0B6B60; }
+      html[data-theme="pastel"] { --accent: #5BADA6; --accent-dark: #2E6B65; --bg: linear-gradient(160deg, #FBFBFA 0%, #F3F6F5 100%); }
 
       html, body { background: var(--bg); -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
       body { color: var(--text); transition: background-color .2s ease, color .2s ease; }
+
+      /* Gem-cut angled card shape used only by the "الجواهر الذهبي" vivid theme */
+      .stat-facet { clip-path: polygon(5% 0%, 100% 0%, 95% 100%, 0% 100%); }
 
       ::-webkit-scrollbar { width: 8px; height: 8px; }
       ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 8px; }
@@ -1544,7 +1682,7 @@ function GlobalStyle() {
 
 /* ---------------------------------- Dashboard ---------------------------------- */
 
-function Dashboard({ sales, products, users, sellerGoals, currentUser, setView }) {
+function Dashboard({ sales, products, users, sellerGoals, currentUser, setView, activeTheme }) {
   const isAdmin = currentUser.role === "admin";
   const mySales = sales; // everyone can see overall store sales now
   const totalRevenue = mySales.reduce((a, s) => a + s.total, 0);
@@ -1580,10 +1718,10 @@ function Dashboard({ sales, products, users, sellerGoals, currentUser, setView }
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <StatCard label="عدد الفواتير" value={mySales.length} color="var(--accent-dark)" icon={Receipt} />
-        <StatCard label="إجمالي المبيعات" value={fmt(totalRevenue) + " K.D"} color="var(--accent)" icon={TrendingUp} />
-        <StatCard label="المحصل" value={fmt(totalCollected) + " K.D"} color="#3F7D57" icon={Wallet} />
-        <StatCard label="المتبقي" value={fmt(totalRemaining) + " K.D"} color="#B23A3A" icon={AlertTriangle} />
+        <StatCard label="عدد الفواتير" value={mySales.length} color="var(--accent-dark)" icon={Receipt} themeKey={activeTheme} slot={0} />
+        <StatCard label="إجمالي المبيعات" value={fmt(totalRevenue) + " K.D"} color="var(--accent)" icon={TrendingUp} themeKey={activeTheme} slot={1} />
+        <StatCard label="المحصل" value={fmt(totalCollected) + " K.D"} color="#3F7D57" icon={Wallet} themeKey={activeTheme} slot={2} />
+        <StatCard label="المتبقي" value={fmt(totalRemaining) + " K.D"} color="#B23A3A" icon={AlertTriangle} themeKey={activeTheme} slot={3} />
       </div>
 
       <button onClick={() => setView("challenges")} className="w-full text-right">
@@ -1655,7 +1793,27 @@ function Dashboard({ sales, products, users, sellerGoals, currentUser, setView }
   );
 }
 
-function StatCard({ label, value, color, icon: Icon }) {
+function StatCard({ label, value, color, icon: Icon, themeKey, slot }) {
+  const vivid = themeKey && VIVID_THEMES[themeKey] && slot != null ? VIVID_THEMES[themeKey] : null;
+  const vividColor = vivid ? vivid.stats[slot % vivid.stats.length] : null;
+
+  if (vivid) {
+    return (
+      <div
+        className={`card-hover relative overflow-hidden p-4 shadow-md ${vivid.facet ? "stat-facet" : "rounded-2xl"}`}
+        style={{ background: `linear-gradient(150deg, ${vividColor}, color-mix(in srgb, ${vividColor} 65%, black))`, border: vivid.facet ? "1px solid rgba(255,255,255,0.35)" : "none" }}
+      >
+        {Icon && (
+          <div className="absolute top-3 left-3 w-6 h-6 rounded-full flex items-center justify-center bg-white/25">
+            <Icon size={12} className="text-white" />
+          </div>
+        )}
+        <p className="text-[11px] text-white/85 mb-1.5 leading-snug line-clamp-2 pl-7">{label}</p>
+        <p dir="ltr" className="text-sm font-extrabold leading-tight whitespace-nowrap text-right text-white">{value}</p>
+      </div>
+    );
+  }
+
   return (
     <Card className="p-4 card-hover relative overflow-hidden">
       {Icon && (
@@ -1998,7 +2156,7 @@ function NewSale({ products, users, currentUser, sales, seq, settings, onCreate 
 
 /* ---------------------------------- Sales Records ---------------------------------- */
 
-function SalesRecords({ sales, users, currentUser, isAdmin, onDelete, onPrintInvoice, onPrintRecord, onCollectPayment, onEditSale, onAddComment, onDeleteComment, onConfirm }) {
+function SalesRecords({ sales, users, currentUser, isAdmin, settings, onDelete, onPrintInvoice, onPrintRecord, onCollectPayment, onEditSale, onAddComment, onDeleteComment, onConfirm }) {
   const [sellerFilter, setSellerFilter] = useState("all");
   const [search, setSearch] = useState("");
   const [payingId, setPayingId] = useState(null);
@@ -2027,7 +2185,7 @@ function SalesRecords({ sales, users, currentUser, isAdmin, onDelete, onPrintInv
           <Btn variant="outline" onClick={() => onPrintRecord(sellerFilter === "all" ? "الكل" : sellerName, list)}>
             <Printer size={16} /> طباعة السجل PDF
           </Btn>
-          <Btn variant="ghost" onClick={() => exportSalesCsv(sellerFilter === "all" ? "الكل" : sellerName, list)}>
+          <Btn variant="ghost" onClick={() => exportSalesExcel(sellerFilter === "all" ? "الكل" : sellerName, list, settings.companyName)}>
             <Download size={16} /> تصدير Excel
           </Btn>
         </div>
@@ -2276,7 +2434,7 @@ function CommentThread({ sale, isAdmin, onAddComment, onDeleteComment }) {
 
 /* ---------------------------------- Stats ---------------------------------- */
 
-function Stats({ sales, users, products, currentUser, isAdmin }) {
+function Stats({ sales, users, products, currentUser, isAdmin, activeTheme }) {
   const [sellerFilter, setSellerFilter] = useState("all");
   const sellers = users.filter((u) => u.role === "seller" || u.role === "admin");
 
@@ -2333,10 +2491,10 @@ function Stats({ sales, users, products, currentUser, isAdmin }) {
       </div>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <StatCard label="عدد الفواتير" value={list.length} color="var(--accent-dark)" icon={Receipt} />
-        <StatCard label="إجمالي المبيعات" value={fmt(totalRevenue) + " K.D"} color="var(--accent)" icon={TrendingUp} />
-        <StatCard label="المحصل" value={fmt(totalCollected) + " K.D"} color="#3F7D57" icon={Wallet} />
-        <StatCard label="المتبقي" value={fmt(totalRemaining) + " K.D"} color="#B23A3A" icon={AlertTriangle} />
+        <StatCard label="عدد الفواتير" value={list.length} color="var(--accent-dark)" icon={Receipt} themeKey={activeTheme} slot={0} />
+        <StatCard label="إجمالي المبيعات" value={fmt(totalRevenue) + " K.D"} color="var(--accent)" icon={TrendingUp} themeKey={activeTheme} slot={1} />
+        <StatCard label="المحصل" value={fmt(totalCollected) + " K.D"} color="#3F7D57" icon={Wallet} themeKey={activeTheme} slot={2} />
+        <StatCard label="المتبقي" value={fmt(totalRemaining) + " K.D"} color="#B23A3A" icon={AlertTriangle} themeKey={activeTheme} slot={3} />
       </div>
 
       {isAdmin && (
@@ -2386,7 +2544,7 @@ function Stats({ sales, users, products, currentUser, isAdmin }) {
 
 /* ---------------------------------- Inventory ---------------------------------- */
 
-function Inventory({ products, isAdmin, onSave, onPrintLabels, stockLogs, onLogAdjustment, onDeleteLog, onConfirm }) {
+function Inventory({ products, isAdmin, onSave, onPrintLabels, stockLogs, onLogAdjustment, onDeleteLog, onConfirm, activeTheme }) {
   const [form, setForm] = useState({ name: "", price: "", cost: "", stock: "", minStock: "5" });
   const [editingId, setEditingId] = useState(null);
   const [labelQty, setLabelQty] = useState({});
@@ -2453,10 +2611,10 @@ function Inventory({ products, isAdmin, onSave, onPrintLabels, stockLogs, onLogA
 
       {/* Summary */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <StatCard label="عدد المنتجات" value={products.length} color="var(--accent-dark)" icon={Package} />
-        <StatCard label="بحاجة لتخزين" value={lowStockCount} color="#B23A3A" icon={AlertTriangle} />
-        {isAdmin && <StatCard label="قيمة التكلفة" value={fmt(inventoryValueCost) + " K.D"} color="var(--accent)" icon={Wallet2} />}
-        {isAdmin && <StatCard label="قيمة البيع" value={fmt(inventoryValueRetail) + " K.D"} color="#3F7D57" icon={TrendingUp} />}
+        <StatCard label="عدد المنتجات" value={products.length} color="var(--accent-dark)" icon={Package} themeKey={activeTheme} slot={0} />
+        <StatCard label="بحاجة لتخزين" value={lowStockCount} color="#B23A3A" icon={AlertTriangle} themeKey={activeTheme} slot={1} />
+        {isAdmin && <StatCard label="قيمة التكلفة" value={fmt(inventoryValueCost) + " K.D"} color="var(--accent)" icon={Wallet2} themeKey={activeTheme} slot={2} />}
+        {isAdmin && <StatCard label="قيمة البيع" value={fmt(inventoryValueRetail) + " K.D"} color="#3F7D57" icon={TrendingUp} themeKey={activeTheme} slot={3} />}
       </div>
 
       {isAdmin && (
@@ -2854,13 +3012,39 @@ function AnnouncementsPage({ announcements, isAdmin, onCreate, onDelete, onConfi
 /* ---------------------------------- Shared theme palette ---------------------------------- */
 
 const THEMES = [
-  { key: "classic", label: "ذهبي عنّابي", accent: "#B8894A", dark: "#5B2333" },
+  { key: "classic", label: "التصميم الأصلي", accent: "#B8894A", dark: "#5B2333" },
   { key: "emerald", label: "زمردي", accent: "#2F8F6B", dark: "#124430" },
   { key: "rose", label: "وردي", accent: "#C2547E", dark: "#6B1F3A" },
   { key: "sapphire", label: "سماوي", accent: "#3B6EA8", dark: "#16324F" },
   { key: "violet", label: "بنفسجي", accent: "#7B5EA8", dark: "#3E2A5C" },
   { key: "amber", label: "كهرماني", accent: "#C97B3D", dark: "#7A3E1D" },
+  { key: "gem", label: "الجواهر الذهبي", accent: "#C9A227", dark: "#4A2C1D", vivid: true },
+  { key: "candy", label: "حيوي وملوّن", accent: "#12A594", dark: "#0B6B60", vivid: true },
+  { key: "pastel", label: "باستيل هادئ", accent: "#5BADA6", dark: "#2E6B65", vivid: true },
 ];
+
+// The 4-color card palette + background flourish for each "vivid" full style.
+// StatCard falls back to the original plain design whenever the active theme
+// isn't listed here (i.e. "التصميم الأصلي" and the 5 plain accent themes),
+// so switching back to classic restores the app's look exactly as it was.
+const VIVID_THEMES = {
+  gem: {
+    stats: ["#2AA6A0", "#C9A227", "#8B2635", "#1F3F73"],
+    bg: "linear-gradient(160deg, #EFE1C4 0%, #DCC291 45%, #C9AE87 100%)",
+    surface: "rgba(255,255,255,0.9)",
+    facet: true,
+  },
+  candy: {
+    stats: ["#3B82F6", "#22C55E", "#F04B4B", "#8B5CF6"],
+    bg: "#ffffff",
+    surface: "#ffffff",
+  },
+  pastel: {
+    stats: ["#6EC6BA", "#8FCB92", "#E8927C", "#7FB3D5"],
+    bg: "linear-gradient(160deg, #FBFBFA 0%, #F3F6F5 100%)",
+    surface: "#ffffff",
+  },
+};
 
 /* ---------------------------------- Sellers' Challenge & Achievements ---------------------------------- */
 
@@ -3120,7 +3304,7 @@ const EXPENSE_CATEGORIES = [
   "أخرى",
 ];
 
-function ExpensesPage({ expenses, onAdd, onDelete, onConfirm }) {
+function ExpensesPage({ expenses, onAdd, onDelete, onConfirm, activeTheme }) {
   const [category, setCategory] = useState(EXPENSE_CATEGORIES[0]);
   const [description, setDescription] = useState("");
   const [amount, setAmount] = useState("");
@@ -3162,8 +3346,8 @@ function ExpensesPage({ expenses, onAdd, onDelete, onConfirm }) {
       <h2 className="text-xl font-bold flex items-center gap-2"><Wallet2 size={20} /> المصروفات</h2>
 
       <div className="grid grid-cols-2 gap-3">
-        <StatCard label="إجمالي المصروفات" value={fmt(total) + " K.D"} color="#B23A3A" icon={Wallet2} />
-        <StatCard label="مصروفات هذا الشهر" value={fmt(thisMonthTotal) + " K.D"} color="var(--accent)" icon={CalendarRange} />
+        <StatCard label="إجمالي المصروفات" value={fmt(total) + " K.D"} color="#B23A3A" icon={Wallet2} themeKey={activeTheme} slot={0} />
+        <StatCard label="مصروفات هذا الشهر" value={fmt(thisMonthTotal) + " K.D"} color="var(--accent)" icon={CalendarRange} themeKey={activeTheme} slot={1} />
       </div>
 
       <Card className="p-4 space-y-3">
@@ -3232,7 +3416,7 @@ function ExpensesPage({ expenses, onAdd, onDelete, onConfirm }) {
 
 const STOCK_LOG_LABELS = { gift: "هدايا", damage: "تالف", tester: "فتح للتجربة" };
 
-function AccountingPage({ sales, products, expenses, stockLogs }) {
+function AccountingPage({ sales, products, expenses, stockLogs, activeTheme }) {
   const costById = useMemo(() => {
     const m = new Map();
     products.forEach((p) => m.set(p.id, p.cost || 0));
@@ -3285,10 +3469,10 @@ function AccountingPage({ sales, products, expenses, stockLogs }) {
       <p className="text-xs text-[var(--muted)] -mt-3">نظرة كاملة تربط المبيعات، تكلفة البضاعة، المصروفات، الهدايا/التالف، وقيمة المخزون في مكان واحد.</p>
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <StatCard label="إجمالي المبيعات" value={fmt(totalRevenue) + " K.D"} color="var(--accent)" icon={TrendingUp} />
-        <StatCard label="المحصل" value={fmt(totalCollected) + " K.D"} color="#3F7D57" icon={Wallet} />
-        <StatCard label="متبقي العملاء" value={fmt(totalRemaining) + " K.D"} color="#B23A3A" icon={AlertTriangle} />
-        <StatCard label="تكلفة البضاعة" value={fmt(cogs) + " K.D"} color="var(--accent-dark)" icon={Package} />
+        <StatCard label="إجمالي المبيعات" value={fmt(totalRevenue) + " K.D"} color="var(--accent)" icon={TrendingUp} themeKey={activeTheme} slot={0} />
+        <StatCard label="المحصل" value={fmt(totalCollected) + " K.D"} color="#3F7D57" icon={Wallet} themeKey={activeTheme} slot={1} />
+        <StatCard label="متبقي العملاء" value={fmt(totalRemaining) + " K.D"} color="#B23A3A" icon={AlertTriangle} themeKey={activeTheme} slot={2} />
+        <StatCard label="تكلفة البضاعة" value={fmt(cogs) + " K.D"} color="var(--accent-dark)" icon={Package} themeKey={activeTheme} slot={3} />
       </div>
 
       <Card className="p-5 text-center">
