@@ -1,4 +1,4 @@
-import ExcelJS from "exceljs";
+import ExcelJS from "exceljs/dist/exceljs.min.js";
 import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import {
   Plus, Trash2, Printer, Download, Upload, LogOut, Package, Receipt,
@@ -2185,7 +2185,15 @@ function SalesRecords({ sales, users, currentUser, isAdmin, settings, onDelete, 
           <Btn variant="outline" onClick={() => onPrintRecord(sellerFilter === "all" ? "الكل" : sellerName, list)}>
             <Printer size={16} /> طباعة السجل PDF
           </Btn>
-          <Btn variant="ghost" onClick={() => exportSalesExcel(sellerFilter === "all" ? "الكل" : sellerName, list, settings.companyName)}>
+          <Btn
+            variant="ghost"
+            onClick={() => {
+              exportSalesExcel(sellerFilter === "all" ? "الكل" : sellerName, list, settings.companyName).catch((err) => {
+                console.error("Excel export failed:", err);
+                alert("تعذّر إنشاء ملف Excel: " + (err?.message || "خطأ غير معروف") + "\n\nأرسل هذه الرسالة للدعم الفني.");
+              });
+            }}
+          >
             <Download size={16} /> تصدير Excel
           </Btn>
         </div>
