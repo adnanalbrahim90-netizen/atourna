@@ -1,4 +1,4 @@
-import ExcelJS from "exceljs/dist/exceljs.min.js";
+import ExcelJS from "exceljs";
 import React, { useState, useEffect, useMemo, useRef, useCallback } from "react";
 import {
   Plus, Trash2, Printer, Download, Upload, LogOut, Package, Receipt,
