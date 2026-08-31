@@ -7,7 +7,8 @@ import {
   Sun, Moon, Pencil, Wallet, Tag, MessageSquare, Megaphone, Gift, Ban,
   Wallet2, Calculator, Percent, Droplet, TrendingUp, TrendingDown, ShieldCheck, Bell,
   Landmark, HandCoins, CalendarRange, Users2, KeyRound, Type,
-  Trophy, Palette, Medal, Target, Flame, Award, Sparkles, Grid3x3
+  Trophy, Palette, Medal, Target, Flame, Award, Sparkles, Grid3x3,
+  History, LogIn, ShieldAlert, Edit3, ScrollText
 } from "lucide-react";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
@@ -616,6 +617,7 @@ const NAV_ITEMS = [
   { key: "users", label: "المستخدمون", icon: UsersIcon, roles: ["admin"] },
   { key: "settings", label: "الإعدادات", icon: SettingsIcon, roles: ["admin"] },
   { key: "backup", label: "النسخ الاحتياطي", icon: Save, roles: ["admin"] },
+  { key: "activitylog", label: "سجل الدخول والنشاطات", icon: History, roles: ["admin"], primaryOnly: true },
 ];
 
 /* ---------------------------------- App Shell ---------------------------------- */
@@ -641,6 +643,7 @@ export default function App() {
   const [partners, setPartners] = useState([]);
   const [profitDistributions, setProfitDistributions] = useState([]); // saved profit-sharing history
   const [dailyBackup, setDailyBackup] = useState(null); // {date, savedAt, data} — auto-overwritten once per day
+  const [activityLog, setActivityLog] = useState([]); // login/logout + business-action audit trail — visible to the primary admin only
   const [sellerGoals, setSellerGoals] = useState({}); // { [userId]: monthlyTargetAmount }
   const [personalTheme, setPersonalThemeState] = useState(""); // per-device theme override, empty = use company theme
   const activeTheme = personalTheme || settings.theme || "classic";
@@ -652,6 +655,29 @@ export default function App() {
 
   const askConfirm = useCallback((message, onConfirm) => {
     setConfirmState({ message, onConfirm });
+  }, []);
+
+  // Records one audit-trail entry (login/logout or any business action).
+  // Reads/writes storage directly (rather than trusting possibly-stale React
+  // state) so rapid actions from different users never clobber each other's
+  // entries, and caps the log at 500 entries so it never grows unbounded.
+  const logActivity = useCallback(async (userObj, action, details) => {
+    try {
+      const current = await storeGet("perfume_activity_log", []);
+      const entry = {
+        id: uid(),
+        userId: userObj?.id || "unknown",
+        userName: userObj?.name || "غير معروف",
+        action,
+        details: details || "",
+        date: todayISO(),
+      };
+      const next = [entry, ...current].slice(0, 500);
+      await storeSet("perfume_activity_log", next);
+      setActivityLog(next);
+    } catch {
+      // Never let logging failures interrupt the actual user action.
+    }
   }, []);
 
   // Keeps the last-synced snapshot so the periodic refresh below can skip
@@ -719,6 +745,15 @@ export default function App() {
     const interval = setInterval(() => loadAll(false), 4000);
     return () => clearInterval(interval);
   }, [loadAll]);
+
+  // The activity log is loaded lazily (only when the primary admin actually
+  // opens that page) rather than in the main polling loop, since it's not
+  // needed by regular sellers and can grow large over time.
+  useEffect(() => {
+    if (view === "activitylog" && currentUser?.isPrimaryAdmin) {
+      storeGet("perfume_activity_log", []).then(setActivityLog);
+    }
+  }, [view, currentUser]);
 
   // Restore an existing login session (stored only in this browser's own
   // localStorage, never in the shared business-data store) so refreshing
@@ -854,11 +889,14 @@ export default function App() {
     };
     await persistAnnouncements([announcement, ...announcements]);
     markAnnouncementSeen(currentUser.id, announcement.id); // don't pop up your own broadcast to yourself
+    logActivity(currentUser, "إرسال تعميم", title.trim());
     showToast("تم إرسال التعميم بنجاح لجميع المستخدمين");
   };
 
   const deleteAnnouncement = async (id) => {
-    await persistAnnouncements(announcements.filter((a) => a.id !== id));
+    const a = announcements.find((x) => x.id === id);
+    await persistAnnouncements(announcements.filter((x) => x.id !== id));
+    logActivity(currentUser, "حذف تعميم", a?.title || "");
     showToast("تم حذف التعميم");
   };
 
@@ -881,6 +919,8 @@ export default function App() {
     await persistProducts(updatedProducts);
     await persistStockLogs([log, ...stockLogs]);
     const labels = { gift: "تم تسجيل الهدية وخصمها من المخزون", damage: "تم تسجيل التالف وخصمه من المخزون", tester: "تم تسجيل فتح المنتج للتجربة وخصمه من المخزون" };
+    const logLabels = { gift: "تسجيل هدية", damage: "تسجيل تالف", tester: "تسجيل فتح للتجربة" };
+    logActivity(currentUser, logLabels[type] || "تعديل مخزون", `${product.name} × ${q}`);
     showToast(labels[type] || "تم تحديث المخزون");
   };
 
@@ -891,6 +931,7 @@ export default function App() {
       await persistProducts(updatedProducts);
     }
     await persistStockLogs(stockLogs.filter((l) => l.id !== id));
+    logActivity(currentUser, "حذف سجل هدية/تالف", log ? `${log.productName} × ${log.qty}` : "");
     showToast("تم حذف السجل وإرجاع الكمية إلى المخزون");
   };
 
@@ -906,11 +947,14 @@ export default function App() {
       byUserName: currentUser.name,
     };
     await persistExpenses([record, ...expenses]);
+    logActivity(currentUser, "تسجيل مصروف", `${record.category} - ${fmt(record.amount)} K.D`);
     showToast("تم تسجيل المصروف");
   };
 
   const deleteExpense = async (id) => {
-    await persistExpenses(expenses.filter((e) => e.id !== id));
+    const e = expenses.find((x) => x.id === id);
+    await persistExpenses(expenses.filter((x) => x.id !== id));
+    logActivity(currentUser, "حذف مصروف", e ? `${e.category} - ${fmt(e.amount)} K.D` : "");
     showToast("تم حذف المصروف");
   };
 
@@ -919,21 +963,26 @@ export default function App() {
   const persistSellerGoals = async (next) => { setSellerGoals(next); await storeSet("perfume_seller_goals", next); };
   const saveSellerGoal = async (userId, amount) => {
     await persistSellerGoals({ ...sellerGoals, [userId]: Number(amount) || 0 });
+    const target = users.find((u) => u.id === userId);
+    logActivity(currentUser, "تحديد هدف شهري", `${target?.name || ""} - ${fmt(Number(amount) || 0)} K.D`);
     showToast("تم حفظ الهدف الشهري");
   };
 
   const savePartners = async (next) => {
     await persistPartners(next);
+    logActivity(currentUser, "تحديث بيانات الشركاء", `${next.length} شريك`);
     showToast("تم حفظ بيانات الشركاء");
   };
 
   const saveProfitDistribution = async (record) => {
     await persistProfitDistributions([record, ...profitDistributions]);
+    logActivity(currentUser, "حفظ توزيع أرباح", `${fmt(record.netProfit || 0)} K.D`);
     showToast("تم حفظ توزيع الأرباح بالسجل");
   };
 
   const deleteProfitDistribution = async (id) => {
     await persistProfitDistributions(profitDistributions.filter((d) => d.id !== id));
+    logActivity(currentUser, "حذف توزيع أرباح", "");
     showToast("تم حذف سجل توزيع الأرباح");
   };
 
@@ -954,6 +1003,7 @@ export default function App() {
     };
     const comments = [...(sale.comments || []), comment];
     await updateSale(id, { comments });
+    logActivity(currentUser, "إضافة ملاحظة على فاتورة", sale.invoiceNo);
     showToast("تمت إضافة الملاحظة على الفاتورة");
   };
 
@@ -962,6 +1012,7 @@ export default function App() {
     if (!sale) return;
     const comments = (sale.comments || []).filter((c) => c.id !== commentId);
     await updateSale(saleId, { comments });
+    logActivity(currentUser, "حذف ملاحظة عن فاتورة", sale.invoiceNo);
     showToast("تم حذف الملاحظة");
   };
 
@@ -999,11 +1050,12 @@ export default function App() {
 
     await persistProducts(updatedProducts);
     await updateSale(id, { items: newItems, subtotal, discountType, discountValue, discountAmount, taxAmount, total, collected, remaining });
+    logActivity(currentUser, "تعديل فاتورة", `${oldSale.invoiceNo} - الإجمالي الجديد ${fmt(total)} K.D`);
   };
 
   const isAdmin = currentUser?.role === "admin";
 
-  const visibleNav = NAV_ITEMS.filter((n) => n.roles.includes(currentUser?.role));
+  const visibleNav = NAV_ITEMS.filter((n) => n.roles.includes(currentUser?.role) && (!n.primaryOnly || currentUser?.isPrimaryAdmin));
 
   const doPrint = () => {
     setTimeout(() => window.print(), 50);
@@ -1041,6 +1093,7 @@ export default function App() {
               window.localStorage.setItem("atourna_session_username", withFlag.username);
               setCurrentUser(withFlag);
               setView("dashboard");
+              logActivity(withFlag, "تسجيل دخول", "إنشاء الحساب الأساسي وأول تسجيل دخول");
             }}
           />
         ) : (
@@ -1050,6 +1103,7 @@ export default function App() {
               window.localStorage.setItem("atourna_session_username", u.username);
               setCurrentUser(u);
               setView("dashboard");
+              logActivity(u, "تسجيل دخول", "");
             }}
             onRecover={async (username, newPassword) => {
               const idx = users.findIndex((u) => u.username.toLowerCase() === username.toLowerCase() && u.isPrimaryAdmin);
@@ -1157,7 +1211,7 @@ export default function App() {
               onOpenAnnouncement={(id) => markAnnouncementSeen(currentUser.id, id)}
             />
             <button
-              onClick={() => { window.localStorage.removeItem("atourna_session_username"); setCurrentUser(null); }}
+              onClick={() => { logActivity(currentUser, "تسجيل خروج", ""); window.localStorage.removeItem("atourna_session_username"); setCurrentUser(null); }}
               className="p-2 rounded-lg text-[#B23A3A] hover:bg-[#FBEAEA]"
               title="تسجيل الخروج"
             >
@@ -1226,6 +1280,7 @@ export default function App() {
                 showToast("تم تسجيل عملية البيع وإصدار الفاتورة بنجاح");
                 setPrintPayload({ type: "invoice", data: sale });
                 setView("records");
+                logActivity(currentUser, "تسجيل عملية بيع", `فاتورة ${sale.invoiceNo} بمبلغ ${fmt(sale.total)} K.D`);
               }}
             />
           )}
@@ -1268,6 +1323,7 @@ export default function App() {
                   : "";
                 const seqNote = reclaimedNumber ? ` وأُعيد الرقم ${sale.invoiceNo} إلى التسلسل ليُستخدم للفاتورة القادمة` : "";
                 showToast(`تم حذف الفاتورة ${sale.invoiceNo}${stockNote}${seqNote}`);
+                logActivity(currentUser, "حذف فاتورة", `${sale.invoiceNo} بمبلغ ${fmt(sale.total)} K.D`);
               }}
               onPrintInvoice={(sale) => setPrintPayload({ type: "invoice", data: sale })}
               onPrintRecord={(sellerName, list) => setPrintPayload({ type: "record", data: { sellerName, list } })}
@@ -1277,6 +1333,7 @@ export default function App() {
                 const collected = Math.min(sale.total, sale.collected + amount);
                 await updateSale(id, { collected, remaining: Math.max(0, sale.total - collected) });
                 showToast("تم تسجيل التحصيل");
+                logActivity(currentUser, "تسجيل تحصيل دفعة", `فاتورة ${sale.invoiceNo} - مبلغ ${fmt(amount)} K.D`);
               }}
               onEditSale={(sale) => setEditingSale(sale)}
               onAddComment={addSaleComment}
@@ -1367,6 +1424,9 @@ export default function App() {
           )}
           {view === "users" && isAdmin && (
             <UsersAdmin users={users} onSave={async (next) => { await persistUsers(next); showToast("تم حفظ بيانات المستخدمين بنجاح"); }} onConfirm={askConfirm} currentUser={currentUser} />
+          )}
+          {view === "activitylog" && currentUser?.isPrimaryAdmin && (
+            <ActivityLogPage log={activityLog} users={users} />
           )}
           {view === "settings" && isAdmin && (
             <SettingsPage settings={settings} onSave={async (next) => { await persistSettings(next); showToast("تم حفظ الإعدادات"); }} fontScale={fontScale} onSetFontScale={setFontScale} />
@@ -3879,6 +3939,85 @@ function SettingsPage({ settings, onSave, fontScale, onSetFontScale }) {
 }
 
 /* ---------------------------------- Backup ---------------------------------- */
+
+/* ---------------------------------- Activity Log (primary admin only) ---------------------------------- */
+
+const ACTIVITY_ICONS = {
+  login: { icon: LogIn, color: "#3F7D57" },
+  logout: { icon: LogOut, color: "#8A7B6C" },
+  delete: { icon: Trash2, color: "#B23A3A" },
+  edit: { icon: Edit3, color: "var(--accent)" },
+};
+function activityVisual(action) {
+  if (action.includes("خروج")) return ACTIVITY_ICONS.logout;
+  if (action.includes("دخول")) return ACTIVITY_ICONS.login;
+  if (action.includes("حذف")) return ACTIVITY_ICONS.delete;
+  if (action.includes("تعديل") || action.includes("تحديث")) return ACTIVITY_ICONS.edit;
+  return { icon: ScrollText, color: "var(--accent-dark)" };
+}
+
+function ActivityLogPage({ log, users }) {
+  const [userFilter, setUserFilter] = useState("all");
+  const [search, setSearch] = useState("");
+
+  let list = log;
+  if (userFilter !== "all") list = list.filter((l) => l.userId === userFilter);
+  if (search.trim()) {
+    const q = search.trim().toLowerCase();
+    list = list.filter((l) => l.action.toLowerCase().includes(q) || l.details.toLowerCase().includes(q) || l.userName.toLowerCase().includes(q));
+  }
+
+  const knownUsers = useMemo(() => {
+    const map = new Map();
+    log.forEach((l) => map.set(l.userId, l.userName));
+    return Array.from(map.entries());
+  }, [log]);
+
+  return (
+    <div className="space-y-5">
+      <div>
+        <h2 className="text-xl font-bold flex items-center gap-2"><History size={20} /> سجل الدخول والنشاطات</h2>
+        <p className="text-xs text-[var(--muted)] mt-1 flex items-center gap-1.5">
+          <ShieldAlert size={13} /> هذه الصفحة خاصة بحساب المدير الأساسي فقط، ولا يراها أي مدير آخر
+        </p>
+      </div>
+
+      <div className="flex flex-col sm:flex-row gap-2">
+        <select className={inputCls + " sm:w-56"} value={userFilter} onChange={(e) => setUserFilter(e.target.value)}>
+          <option value="all">كل المستخدمين</option>
+          {knownUsers.map(([id, name]) => <option key={id} value={id}>{name}</option>)}
+        </select>
+        <div className="relative flex-1">
+          <Search size={16} className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--muted)]" />
+          <input className={inputCls + " pr-9"} placeholder="بحث في الإجراءات أو التفاصيل..." value={search} onChange={(e) => setSearch(e.target.value)} />
+        </div>
+      </div>
+
+      {list.length === 0 ? (
+        <Card className="p-8"><EmptyState text="لا توجد أي أحداث مسجَّلة بعد" /></Card>
+      ) : (
+        <div className="space-y-2">
+          {list.map((l) => {
+            const { icon: Icon, color } = activityVisual(l.action);
+            return (
+              <Card key={l.id} className="p-3 flex items-start gap-3">
+                <div className="w-9 h-9 rounded-full flex items-center justify-center shrink-0" style={{ background: `color-mix(in srgb, ${color} 16%, transparent)` }}>
+                  <Icon size={16} style={{ color }} />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-semibold">{l.userName} <span className="font-normal text-[var(--muted)]">— {l.action}</span></p>
+                  {l.details && <p className="text-xs text-[var(--muted)] mt-0.5">{l.details}</p>}
+                  <p className="text-[10px] text-[var(--muted)] mt-1">{dateLabel(l.date)} · {timeLabel(l.date)}</p>
+                </div>
+              </Card>
+            );
+          })}
+        </div>
+      )}
+      <p className="text-[11px] text-[var(--muted)] text-center">يحتفظ السجل بآخر 500 حدث فقط لتفادي أخذ مساحة كبيرة بمرور الوقت</p>
+    </div>
+  );
+}
 
 function BackupPage({ data, onRestore, dailyBackup, onRefreshDailyBackup }) {
   const fileRef = useRef(null);
