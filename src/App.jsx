@@ -685,7 +685,7 @@ export default function App() {
   const lastSnapshot = useRef("");
 
   const loadAll = useCallback(async (isInitial) => {
-    const u = await storeGet("perfume_users", []);
+    let u = await storeGet("perfume_users", []);
     const p = await storeGet("perfume_products", []);
     const s = await storeGet("perfume_sales", []);
     const sq = await storeGet("perfume_seq", {});
@@ -696,6 +696,22 @@ export default function App() {
     const pt = await storeGet("perfume_partners", []);
     const pd = await storeGet("perfume_profit_distributions", []);
     const sg = await storeGet("perfume_seller_goals", {});
+
+    // Self-healing migration: some accounts lost their "primary admin" flag
+    // (e.g. after restoring a backup taken before this feature existed),
+    // which silently hides the primary-admin-only features (activity log,
+    // protection from deletion). If nobody is flagged, auto-promote the
+    // account named "Adnan" if present, otherwise the first admin — no
+    // manual database editing required.
+    if (u.length > 0 && !u.some((x) => x.isPrimaryAdmin)) {
+      const preferred = u.find((x) => x.username?.trim().toLowerCase() === "adnan" && x.role === "admin");
+      const fallback = u.find((x) => x.role === "admin");
+      const target = preferred || fallback;
+      if (target) {
+        u = u.map((x) => (x.id === target.id ? { ...x, isPrimaryAdmin: true } : x));
+        await storeSet("perfume_users", u);
+      }
+    }
 
     const snapshot = JSON.stringify({ u, p, s, sq, st, an, sl, ex, pt, pd, sg });
     if (snapshot === lastSnapshot.current) return; // nothing new, avoid needless re-render
