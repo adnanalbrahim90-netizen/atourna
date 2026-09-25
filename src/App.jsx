@@ -9,7 +9,7 @@ import {
   Landmark, HandCoins, CalendarRange, Users2, KeyRound, Type,
   Trophy, Palette, Medal, Target, Flame, Award, Sparkles, Grid3x3,
   History, LogIn, ShieldAlert, Edit3, ScrollText,
-  Boxes, ArrowLeftRight, PackageCheck
+  Boxes, ArrowLeftRight, PackageCheck, Minus
 } from "lucide-react";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
@@ -1146,7 +1146,7 @@ export default function App() {
     for (const [pid, qty] of newQty) {
       if (!qty || !isProductManaged(updatedAllocations, pid)) continue;
       const sellerForSale = users.find((u) => u.id === oldSale.sellerId);
-      if (!sellerForSale || sellerForSale.role === "admin") continue;
+      if (!sellerForSale) continue;
       const cap = Math.min(qty, totalRemainingForProduct(updatedAllocations, pid));
       if (cap <= 0) continue;
       const result = consumeAllocation(updatedAllocations, oldSale.sellerId, pid, cap);
@@ -2057,9 +2057,11 @@ function NewSale({ products, users, currentUser, sales, seq, settings, sellerAll
 
   const seller = users.find((u) => u.id === sellerId) || currentUser;
   const selectedProduct = products.find((p) => p.id === productId);
-  // Regular admins represent the whole shop rather than a personal share,
-  // so per-seller allocation limits never apply when selling "as" an admin.
-  const isSellerRole = seller.role !== "admin";
+  // Managers sell too, so they can hold — and be limited by — a personal
+  // stock allocation exactly like any other seller; there is no role-based
+  // exemption here. (Kept as a named flag rather than inlining `true`
+  // everywhere below, since it documents *why* the allocation checks run.)
+  const isSellerRole = true;
 
   useEffect(() => {
     if (selectedProduct) setUnitPrice(String(selectedProduct.price));
@@ -3250,10 +3252,13 @@ function AnnouncementPopup({ announcement, onClose }) {
 // nobody has assigned a share for stay completely unrestricted, exactly as
 // before — this page is only where that opt-in choice is made.
 function StockAllocationPage({ products, users, currentUser, isAdmin, allocations, onSave, onConfirm }) {
-  const sellersOnly = users.filter((u) => u.role === "seller");
+  // Managers sell too, so every account — admin or seller — can receive a
+  // personal stock allocation, not sellers only.
+  const sellersOnly = users;
   const managedProductIds = new Set(allocations.map((a) => a.productId));
   const [productId, setProductId] = useState("");
   const [draft, setDraft] = useState({});
+  const [deltaDraft, setDeltaDraft] = useState({});
   const [search, setSearch] = useState("");
 
   const product = products.find((p) => p.id === productId) || null;
@@ -3287,10 +3292,31 @@ function StockAllocationPage({ products, users, currentUser, isAdmin, allocation
     setDraft((d) => ({ ...d, [seller.id]: undefined }));
   };
 
+  // Quick top-up / take-back: bumps this seller's assigned quantity by a
+  // small delta (both the total allocated and what's currently available to
+  // sell) without having to retype the full new total — the everyday way to
+  // hand a seller more stock mid-day, or pull unused stock back.
+  const adjustSeller = (seller, delta) => {
+    if (!product || !delta) return;
+    const existing = recordFor(seller.id);
+    if (!existing) {
+      if (delta <= 0) return; // nothing to take back from an empty allocation
+      onSave(
+        [...allocations, { id: uid(), sellerId: seller.id, sellerName: seller.name, productId, productName: product.name, allocated: delta, remaining: delta }],
+        `${product.name} ← ${seller.name}: +${delta} قطعة`
+      );
+      return;
+    }
+    const newAllocated = Math.max(0, existing.allocated + delta);
+    const newRemaining = Math.max(0, Math.min(newAllocated, existing.remaining + delta));
+    const next = allocations.map((a) => (a.id === existing.id ? { ...a, allocated: newAllocated, remaining: newRemaining } : a));
+    onSave(next, `${product.name} ← ${seller.name}: ${delta > 0 ? "+" : ""}${delta} قطعة`);
+  };
+
   const equalDistribute = () => {
     if (!product || sellersOnly.length === 0) return;
     onConfirm(
-      `سيتم توزيع كامل كمية "${product.name}" (${product.stock} قطعة) بالتساوي على ${sellersOnly.length} بائع، ما يستبدل أي توزيع سابق لهذا المنتج. هل تريد المتابعة؟`,
+      `سيتم توزيع كامل كمية "${product.name}" (${product.stock} قطعة) بالتساوي على ${sellersOnly.length} حساب (بائعين ومديرين)، ما يستبدل أي توزيع سابق لهذا المنتج. هل تريد المتابعة؟`,
       () => {
         const base = Math.floor(product.stock / sellersOnly.length);
         let remainder = product.stock - base * sellersOnly.length;
@@ -3358,11 +3384,11 @@ function StockAllocationPage({ products, users, currentUser, isAdmin, allocation
     <div className="space-y-5">
       <h2 className="text-xl font-bold flex items-center gap-2"><Boxes size={22} /> توزيع المخزون على البائعين</h2>
       <p className="text-sm text-[var(--muted)]">
-        اختر منتجاً وخصّص لكل بائع كمية من مخزونه الشخصي. عند بيع بائع لكامل كميته، يُستكمل البيع تلقائياً من مخزون زميل آخر لديه رصيد متبقٍ من نفس المنتج.
+        اختر منتجاً وخصّص لكل حساب — بائعاً كان أو مديراً — كمية من مخزونه الشخصي، وزِد أو أنقِص منها في أي وقت. عند بيع أحدهم لكامل كميته، يُستكمل البيع تلقائياً من مخزون زميل آخر لديه رصيد متبقٍ من نفس المنتج.
       </p>
 
       {sellersOnly.length === 0 ? (
-        <Card className="p-8"><EmptyState text="لا يوجد بائعون مسجّلون بعد لتوزيع المخزون عليهم" /></Card>
+        <Card className="p-8"><EmptyState text="لا يوجد حسابات مسجّلة بعد لتوزيع المخزون عليها" /></Card>
       ) : (
         <>
           <Card className="p-4 space-y-3">
@@ -3420,10 +3446,17 @@ function StockAllocationPage({ products, users, currentUser, isAdmin, allocation
                     const dirty = draft[s.id] !== undefined && draft[s.id] !== (rec ? String(rec.allocated) : "");
                     const sold = rec ? rec.allocated - rec.remaining : 0;
                     const low = rec && rec.remaining <= 0 && rec.allocated > 0;
+                    const deltaValue = deltaDraft[s.id] ?? "1";
+                    const delta = Math.max(1, Math.floor(Number(deltaValue) || 1));
                     return (
                       <div key={s.id} className="flex items-center gap-3 bg-[var(--surface-2)] rounded-xl px-3 py-2.5 flex-wrap">
                         <div className="flex-1 min-w-[120px]">
-                          <p className="font-semibold text-sm">{s.name}</p>
+                          <p className="font-semibold text-sm flex items-center gap-1.5">
+                            {s.name}
+                            <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-[var(--surface-3)] text-[var(--muted)]">
+                              {s.role === "admin" ? "مدير" : "بائع"}
+                            </span>
+                          </p>
                           {rec ? (
                             <p className={`text-xs ${low ? "text-[#B23A3A]" : "text-[var(--muted)]"}`}>
                               المتبقي: {rec.remaining} / {rec.allocated} — تم بيع {sold}
@@ -3432,11 +3465,40 @@ function StockAllocationPage({ products, users, currentUser, isAdmin, allocation
                             <p className="text-xs text-[var(--muted)]">لم يُخصص له شيء بعد</p>
                           )}
                         </div>
+
+                        {/* Quick +/- adjustment: top up or take back stock by a small step */}
+                        <div className="flex items-center gap-1">
+                          <button
+                            type="button"
+                            title="إنقاص الكمية"
+                            onClick={() => adjustSeller(s, -delta)}
+                            className="w-8 h-8 rounded-lg bg-[#FBEAEA] text-[#B23A3A] flex items-center justify-center hover:brightness-95 active:scale-95"
+                          >
+                            <Minus size={14} />
+                          </button>
+                          <input
+                            type="number"
+                            min="1"
+                            className={inputCls + " !w-14 !py-1.5 text-center"}
+                            value={deltaValue}
+                            onChange={(e) => setDeltaDraft((d) => ({ ...d, [s.id]: e.target.value }))}
+                          />
+                          <button
+                            type="button"
+                            title="زيادة الكمية"
+                            onClick={() => adjustSeller(s, delta)}
+                            className="w-8 h-8 rounded-lg bg-[#EAF6EF] text-[#3F7D57] flex items-center justify-center hover:brightness-95 active:scale-95"
+                          >
+                            <Plus size={14} />
+                          </button>
+                        </div>
+
+                        {/* Precise set: type the exact total assigned quantity */}
                         <input
                           type="number"
                           min="0"
                           className={inputCls + " !w-24 !py-1.5"}
-                          placeholder="الكمية"
+                          placeholder="الكمية الإجمالية"
                           value={value}
                           onChange={(e) => setDraft((d) => ({ ...d, [s.id]: e.target.value }))}
                         />
