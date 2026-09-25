@@ -8,7 +8,8 @@ import {
   Wallet2, Calculator, Percent, Droplet, TrendingUp, TrendingDown, ShieldCheck, Bell,
   Landmark, HandCoins, CalendarRange, Users2, KeyRound, Type,
   Trophy, Palette, Medal, Target, Flame, Award, Sparkles, Grid3x3,
-  History, LogIn, ShieldAlert, Edit3, ScrollText
+  History, LogIn, ShieldAlert, Edit3, ScrollText,
+  Boxes, ArrowLeftRight, PackageCheck
 } from "lucide-react";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
@@ -63,6 +64,70 @@ async function storeSet(key, value, shared = true) {
     return false;
   }
 }
+
+/* ---------------------------- seller stock allocation ---------------------------- */
+// A product only becomes "managed" the moment the admin assigns at least one
+// seller-specific quantity for it (a `perfume_seller_allocations` record).
+// Until then every seller keeps selling straight from the shared pool,
+// exactly like before — this feature is entirely opt-in, product by product.
+const isProductManaged = (allocations, productId) => allocations.some((a) => a.productId === productId);
+
+const getAllocationRecord = (allocations, sellerId, productId) =>
+  allocations.find((a) => a.sellerId === sellerId && a.productId === productId) || null;
+
+const remainingForSeller = (allocations, sellerId, productId) =>
+  getAllocationRecord(allocations, sellerId, productId)?.remaining || 0;
+
+const totalRemainingForProduct = (allocations, productId) =>
+  allocations.filter((a) => a.productId === productId).reduce((sum, a) => sum + a.remaining, 0);
+
+// Draws `qty` units of `productId` out of the allocation pool for `sellerId`:
+// their own personal share first, and once that runs out, borrows the rest
+// from whichever colleague still has the most left — so a seller is never
+// blocked from closing a sale just because their own share ran dry while a
+// teammate's is still sitting unused. Returns the updated allocation list
+// plus a source breakdown (who it really came from) for the audit trail.
+const consumeAllocation = (allocations, sellerId, productId, qty) => {
+  let remainingToTake = qty;
+  const next = allocations.map((a) => ({ ...a }));
+  const sources = [];
+
+  const own = next.find((a) => a.sellerId === sellerId && a.productId === productId);
+  if (own && own.remaining > 0 && remainingToTake > 0) {
+    const take = Math.min(own.remaining, remainingToTake);
+    own.remaining -= take;
+    remainingToTake -= take;
+    sources.push({ sellerId: own.sellerId, sellerName: own.sellerName, productId, qty: take, borrowed: false });
+  }
+
+  while (remainingToTake > 0) {
+    const lenders = next
+      .filter((a) => a.productId === productId && a.sellerId !== sellerId && a.remaining > 0)
+      .sort((a, b) => b.remaining - a.remaining);
+    if (lenders.length === 0) break; // nothing left anywhere — caller is expected to cap qty beforehand
+    const lender = next.find((a) => a.id === lenders[0].id);
+    const take = Math.min(lender.remaining, remainingToTake);
+    lender.remaining -= take;
+    remainingToTake -= take;
+    sources.push({ sellerId: lender.sellerId, sellerName: lender.sellerName, productId, qty: take, borrowed: true });
+  }
+
+  return { allocations: next, sources };
+};
+
+// Reverses consumeAllocation — used when a sale is deleted or edited, so
+// every unit (owned or borrowed) goes back to exactly the seller it came
+// from. Silently skips a source whose allocation record no longer exists
+// (e.g. the product was deleted since), rather than failing the whole undo.
+const restoreAllocation = (allocations, sources) => {
+  if (!sources || sources.length === 0) return allocations;
+  const next = allocations.map((a) => ({ ...a }));
+  sources.forEach((src) => {
+    const rec = next.find((a) => a.sellerId === src.sellerId && a.productId === src.productId);
+    if (rec) rec.remaining = Math.min(rec.allocated, rec.remaining + src.qty);
+  });
+  return next;
+};
 
 // Passwords are never stored in plain text: every password is hashed with
 // SHA-256 (via the browser's built-in Web Crypto API) before being written
@@ -608,6 +673,7 @@ const NAV_ITEMS = [
   { key: "records", label: "سجل المبيعات", icon: Receipt, roles: ["admin", "seller"] },
   { key: "stats", label: "الإحصائيات", icon: BarChart3, roles: ["admin", "seller"] },
   { key: "inventory", label: "المخزون", icon: Package, roles: ["admin", "seller"] },
+  { key: "allocations", label: "توزيع المخزون على البائعين", icon: Boxes, roles: ["admin", "seller"] },
   { key: "announcements", label: "التعاميم", icon: Megaphone, roles: ["admin", "seller"] },
   { key: "challenges", label: "التحديات والإنجازات", icon: Trophy, roles: ["admin", "seller"] },
   { key: "preferences", label: "تفضيلاتي", icon: Palette, roles: ["admin", "seller"] },
@@ -645,6 +711,7 @@ export default function App() {
   const [dailyBackup, setDailyBackup] = useState(null); // {date, savedAt, data} — auto-overwritten once per day
   const [activityLog, setActivityLog] = useState([]); // login/logout + business-action audit trail — visible to the primary admin only
   const [sellerGoals, setSellerGoals] = useState({}); // { [userId]: monthlyTargetAmount }
+  const [sellerAllocations, setSellerAllocations] = useState([]); // [{id, sellerId, sellerName, productId, productName, allocated, remaining}]
   const [personalTheme, setPersonalThemeState] = useState(""); // per-device theme override, empty = use company theme
   const activeTheme = personalTheme || settings.theme || "classic";
   const [personalCardStyle, setPersonalCardStyleState] = useState(""); // per-device card-style override, empty = use company style
@@ -696,6 +763,7 @@ export default function App() {
     const pt = await storeGet("perfume_partners", []);
     const pd = await storeGet("perfume_profit_distributions", []);
     const sg = await storeGet("perfume_seller_goals", {});
+    const sa = await storeGet("perfume_seller_allocations", []);
 
     // Self-healing migration: some accounts lost their "primary admin" flag
     // (e.g. after restoring a backup taken before this feature existed),
@@ -713,7 +781,7 @@ export default function App() {
       }
     }
 
-    const snapshot = JSON.stringify({ u, p, s, sq, st, an, sl, ex, pt, pd, sg });
+    const snapshot = JSON.stringify({ u, p, s, sq, st, an, sl, ex, pt, pd, sg, sa });
     if (snapshot === lastSnapshot.current) return; // nothing new, avoid needless re-render
     lastSnapshot.current = snapshot;
 
@@ -728,6 +796,7 @@ export default function App() {
     setPartners(pt);
     setProfitDistributions(pd);
     setSellerGoals(sg);
+    setSellerAllocations(sa);
     if (isInitial) setLoading(false);
 
     // Automatic rolling daily backup: one single snapshot, overwritten once
@@ -977,6 +1046,7 @@ export default function App() {
   const persistPartners = async (next) => { setPartners(next); await storeSet("perfume_partners", next); };
   const persistProfitDistributions = async (next) => { setProfitDistributions(next); await storeSet("perfume_profit_distributions", next); };
   const persistSellerGoals = async (next) => { setSellerGoals(next); await storeSet("perfume_seller_goals", next); };
+  const persistSellerAllocations = async (next) => { setSellerAllocations(next); await storeSet("perfume_seller_allocations", next); };
   const saveSellerGoal = async (userId, amount) => {
     await persistSellerGoals({ ...sellerGoals, [userId]: Number(amount) || 0 });
     const target = users.find((u) => u.id === userId);
@@ -1065,7 +1135,27 @@ export default function App() {
     });
 
     await persistProducts(updatedProducts);
-    await updateSale(id, { items: newItems, subtotal, discountType, discountValue, discountAmount, taxAmount, total, collected, remaining });
+
+    // Reconcile the seller's personal stock allocation the same way a
+    // delete+recreate would: give back everything the original invoice had
+    // drawn on, then re-draw fresh for the edited quantities (own share
+    // first, borrowing again if needed) — so an edited invoice never leaves
+    // a stale claim on anyone's allocation.
+    let updatedAllocations = restoreAllocation(sellerAllocations, oldSale.allocationSources);
+    const allocationSources = [];
+    for (const [pid, qty] of newQty) {
+      if (!qty || !isProductManaged(updatedAllocations, pid)) continue;
+      const sellerForSale = users.find((u) => u.id === oldSale.sellerId);
+      if (!sellerForSale || sellerForSale.role === "admin") continue;
+      const cap = Math.min(qty, totalRemainingForProduct(updatedAllocations, pid));
+      if (cap <= 0) continue;
+      const result = consumeAllocation(updatedAllocations, oldSale.sellerId, pid, cap);
+      updatedAllocations = result.allocations;
+      allocationSources.push(...result.sources);
+    }
+    await persistSellerAllocations(updatedAllocations);
+
+    await updateSale(id, { items: newItems, subtotal, discountType, discountValue, discountAmount, taxAmount, total, collected, remaining, allocationSources });
     logActivity(currentUser, "تعديل فاتورة", `${oldSale.invoiceNo} - الإجمالي الجديد ${fmt(total)} K.D`);
   };
 
@@ -1289,14 +1379,21 @@ export default function App() {
               sales={sales}
               seq={seq}
               settings={settings}
-              onCreate={async (sale, updatedProducts, newSeq) => {
+              sellerAllocations={sellerAllocations}
+              onCreate={async (sale, updatedProducts, newSeq, updatedAllocations) => {
                 await persistProducts(updatedProducts);
                 await persistSales([sale, ...sales]);
                 await persistSeq(newSeq);
+                if (updatedAllocations) await persistSellerAllocations(updatedAllocations);
                 showToast("تم تسجيل عملية البيع وإصدار الفاتورة بنجاح");
                 setPrintPayload({ type: "invoice", data: sale });
                 setView("records");
                 logActivity(currentUser, "تسجيل عملية بيع", `فاتورة ${sale.invoiceNo} بمبلغ ${fmt(sale.total)} K.D`);
+                const borrowed = (sale.allocationSources || []).filter((s) => s.borrowed);
+                if (borrowed.length) {
+                  const note = borrowed.map((s) => `${s.qty} من ${s.sellerName}`).join("، ");
+                  logActivity(currentUser, "استعارة مخزون بين البائعين", `فاتورة ${sale.invoiceNo} - ${note}`);
+                }
               }}
             />
           )}
@@ -1319,6 +1416,14 @@ export default function App() {
                   return returned ? { ...p, stock: p.stock + returned } : p;
                 });
                 await persistProducts(updatedProducts);
+
+                // 1b) Give back whatever seller-allocation units this invoice
+                // drew on (both a seller's own share and anything borrowed
+                // from a colleague), so deleting a sale never leaves stock
+                // "stuck" as unavailable in someone's personal allocation.
+                if (sale.allocationSources && sale.allocationSources.length) {
+                  await persistSellerAllocations(restoreAllocation(sellerAllocations, sale.allocationSources));
+                }
 
                 // 2) Reclaim the invoice number so the sequence isn't left
                 // with a "lost" number — but only when this was the very
@@ -1369,6 +1474,21 @@ export default function App() {
               onDeleteLog={deleteStockLog}
               onConfirm={askConfirm}
               activeTheme={activeTheme}
+            />
+          )}
+          {view === "allocations" && (
+            <StockAllocationPage
+              products={products}
+              users={users}
+              currentUser={currentUser}
+              isAdmin={isAdmin}
+              allocations={sellerAllocations}
+              onSave={async (next, note) => {
+                await persistSellerAllocations(next);
+                showToast("تم تحديث توزيع المخزون");
+                logActivity(currentUser, "تعديل توزيع المخزون", note || "");
+              }}
+              onConfirm={askConfirm}
             />
           )}
           {view === "announcements" && (
@@ -1916,7 +2036,7 @@ function EmptyState({ text }) {
 
 /* ---------------------------------- New Sale ---------------------------------- */
 
-function NewSale({ products, users, currentUser, sales, seq, settings, onCreate }) {
+function NewSale({ products, users, currentUser, sales, seq, settings, sellerAllocations = [], onCreate }) {
   const isAdmin = currentUser.role === "admin";
   const sellers = users.filter((u) => u.role === "seller" || u.role === "admin");
   const [sellerId, setSellerId] = useState(currentUser.id);
@@ -1937,6 +2057,9 @@ function NewSale({ products, users, currentUser, sales, seq, settings, onCreate 
 
   const seller = users.find((u) => u.id === sellerId) || currentUser;
   const selectedProduct = products.find((p) => p.id === productId);
+  // Regular admins represent the whole shop rather than a personal share,
+  // so per-seller allocation limits never apply when selling "as" an admin.
+  const isSellerRole = seller.role !== "admin";
 
   useEffect(() => {
     if (selectedProduct) setUnitPrice(String(selectedProduct.price));
@@ -1944,12 +2067,38 @@ function NewSale({ products, users, currentUser, sales, seq, settings, onCreate 
 
   const cartQtyFor = (pid) => cart.filter((c) => c.productId === pid).reduce((a, c) => a + c.qty, 0);
 
+  // How many more units of this product can still be added to the cart for
+  // the currently-selected seller. For an unmanaged product (no allocation
+  // ever assigned) or a sale made "as" an admin, this is simply the shop's
+  // physical stock — identical to the app's original behaviour. For a
+  // managed product sold by a seller, it's capped by the total still sitting
+  // across every seller's personal allocation (their own + borrowable),
+  // since selling more than that would draw on stock nobody has been given.
+  const availableFor = (product) => {
+    const consumed = cartQtyFor(product.id);
+    if (!isSellerRole || !isProductManaged(sellerAllocations, product.id)) {
+      return product.stock - consumed;
+    }
+    return Math.min(product.stock, totalRemainingForProduct(sellerAllocations, product.id)) - consumed;
+  };
+
+  // For a managed product, tells the cart whether the seller's own share
+  // covers what's already in the cart, or whether some of it will have to
+  // be borrowed from a colleague once the sale goes through.
+  const borrowPreviewFor = (pid) => {
+    if (!isSellerRole || !isProductManaged(sellerAllocations, pid)) return null;
+    const totalQty = cartQtyFor(pid);
+    const own = remainingForSeller(sellerAllocations, seller.id, pid);
+    if (totalQty <= own) return null;
+    return { own, borrowedQty: totalQty - own };
+  };
+
   // Tap a product tile: adds one unit at its default price, merging into an
   // existing cart line for the same product+price instead of creating a new
   // one, so repeated taps just bump the quantity — this is the fast
   // point-of-sale-style add path.
   const addTileToCart = (product) => {
-    const available = product.stock - cartQtyFor(product.id);
+    const available = availableFor(product);
     if (available <= 0) return;
     setCart((c) => {
       const idx = c.findIndex((l) => l.productId === product.id && l.price === product.price);
@@ -1967,7 +2116,7 @@ function NewSale({ products, users, currentUser, sales, seq, settings, onCreate 
     const q = Number(qty);
     const price = Number(unitPrice);
     if (!q || q <= 0) return;
-    const availableStock = selectedProduct.stock - cart.filter((c) => c.productId === productId).reduce((a, c) => a + c.qty, 0);
+    const availableStock = availableFor(selectedProduct);
     if (q > availableStock) return;
     setCart((c) => [...c, { lineId: uid(), productId: selectedProduct.id, name: selectedProduct.name, qty: q, price, total: q * price }]);
     setProductId("");
@@ -1998,6 +2147,26 @@ function NewSale({ products, users, currentUser, sales, seq, settings, onCreate 
       const used = cart.filter((c) => c.productId === p.id).reduce((a, c) => a + c.qty, 0);
       return used ? { ...p, stock: p.stock - used } : p;
     });
+
+    // Draw the sold quantities out of the seller's personal stock
+    // allocation for every managed product — own share first, then
+    // borrowed from whichever colleague has the most left. Regular admins
+    // are exempt, since they act on behalf of the whole shop rather than a
+    // personal share. `allocationSources` becomes the sale's audit trail
+    // (and lets a later delete/edit give every unit back to its rightful owner).
+    let updatedAllocations = sellerAllocations;
+    const allocationSources = [];
+    if (isSellerRole) {
+      const qtyByProduct = new Map();
+      cart.forEach((c) => qtyByProduct.set(c.productId, (qtyByProduct.get(c.productId) || 0) + c.qty));
+      for (const [pid, qty] of qtyByProduct) {
+        if (!isProductManaged(updatedAllocations, pid)) continue;
+        const result = consumeAllocation(updatedAllocations, seller.id, pid, qty);
+        updatedAllocations = result.allocations;
+        allocationSources.push(...result.sources);
+      }
+    }
+
     const nextNum = (seq.count || 0) + 1;
     const newSeq = { ...seq, count: nextNum };
     const invoiceNo = `INV-${String(nextNum).padStart(5, "0")}`;
@@ -2019,8 +2188,9 @@ function NewSale({ products, users, currentUser, sales, seq, settings, onCreate 
       total,
       collected: collectedNum,
       remaining,
+      allocationSources,
     };
-    await onCreate(sale, updatedProducts, newSeq);
+    await onCreate(sale, updatedProducts, newSeq, updatedAllocations);
     setCart([]);
     setCollected("");
     setDiscountValue("");
@@ -2045,6 +2215,12 @@ function NewSale({ products, users, currentUser, sales, seq, settings, onCreate 
             ))}
           </select>
         </Field>
+        {isSellerRole && (
+          <p className="text-[11px] text-[var(--muted)] flex items-start gap-1.5">
+            <Boxes size={13} className="shrink-0 mt-0.5" />
+            بالنسبة للمنتجات التي تم توزيعها على البائعين، يُخصم البيع من مخزون {seller.name} الشخصي أولاً، ثم يُستعار تلقائياً من مخزون زميل عند نفاده.
+          </p>
+        )}
       </Card>
 
       {/* POS-style tap-to-add product grid */}
@@ -2075,15 +2251,19 @@ function NewSale({ products, users, currentUser, sales, seq, settings, onCreate 
         ) : (
           <div className={`grid ${tileGridCls} gap-2`}>
             {filteredProducts.map((p, i) => {
-              const available = p.stock - cartQtyFor(p.id);
+              const available = availableFor(p);
               const inCartQty = cartQtyFor(p.id);
               const disabled = available <= 0;
               const tileColor = COLORS[i % COLORS.length];
+              const managed = isSellerRole && isProductManaged(sellerAllocations, p.id);
+              const ownLeft = managed ? Math.max(0, remainingForSeller(sellerAllocations, seller.id, p.id) - inCartQty) : null;
+              const willBorrow = managed && !disabled && ownLeft <= 0;
               return (
                 <button
                   key={p.id}
                   onClick={() => addTileToCart(p)}
                   disabled={disabled}
+                  title={managed ? (willBorrow ? "سيُستعار من زميل" : `المتبقي من مخصصك: ${ownLeft}`) : undefined}
                   className={`relative rounded-2xl border-2 flex flex-col items-center justify-center text-center transition ${tileBoxCls} ${
                     disabled ? "opacity-40 grayscale border-[var(--border)]" : "border-[var(--border)] hover:border-[var(--accent)] hover:-translate-y-0.5 active:scale-95"
                   }`}
@@ -2094,6 +2274,15 @@ function NewSale({ products, users, currentUser, sales, seq, settings, onCreate 
                       {inCartQty}
                     </span>
                   )}
+                  {managed && !disabled && (
+                    <span
+                      className={`absolute -top-1.5 -right-1.5 rounded-full w-5 h-5 flex items-center justify-center shadow fade-in ${
+                        willBorrow ? "bg-[#C97B3D] text-white" : "bg-[#3F7D57] text-white"
+                      }`}
+                    >
+                      {willBorrow ? <ArrowLeftRight size={11} /> : <PackageCheck size={11} />}
+                    </span>
+                  )}
                   <div
                     className="rounded-full flex items-center justify-center mb-1 shrink-0"
                     style={{ width: tileIconPx + 16, height: tileIconPx + 16, background: `color-mix(in srgb, ${tileColor} 20%, transparent)` }}
@@ -2102,6 +2291,9 @@ function NewSale({ products, users, currentUser, sales, seq, settings, onCreate 
                   </div>
                   <p className={`font-bold leading-tight line-clamp-2 ${tileNameCls}`}>{p.name}</p>
                   {tileSize !== "sm" && <p className={`text-[var(--muted)] ${tilePriceCls}`} dir="ltr">{fmt(p.price)} K.D</p>}
+                  {managed && tileSize === "lg" && (
+                    <p className="text-[10px] text-[var(--muted)] mt-0.5">مخصصك: {ownLeft}</p>
+                  )}
                 </button>
               );
             })}
@@ -2117,11 +2309,15 @@ function NewSale({ products, users, currentUser, sales, seq, settings, onCreate 
             <Field label="المنتج">
               <select className={inputCls} value={productId} onChange={(e) => setProductId(e.target.value)}>
                 <option value="">اختر منتج...</option>
-                {products.map((p) => (
-                  <option key={p.id} value={p.id} disabled={p.stock <= 0}>
-                    {p.name} — متبقي {p.stock}
-                  </option>
-                ))}
+                {products.map((p) => {
+                  const avail = availableFor(p);
+                  const managed = isSellerRole && isProductManaged(sellerAllocations, p.id);
+                  return (
+                    <option key={p.id} value={p.id} disabled={avail <= 0}>
+                      {p.name} — متبقي {avail}{managed ? ` (مخصصك: ${remainingForSeller(sellerAllocations, seller.id, p.id)})` : ""}
+                    </option>
+                  );
+                })}
               </select>
             </Field>
           </div>
@@ -2143,18 +2339,26 @@ function NewSale({ products, users, currentUser, sales, seq, settings, onCreate 
           <EmptyState text="لم تتم إضافة منتجات بعد" />
         ) : (
           <div className="space-y-2">
-            {cart.map((l) => (
-              <div key={l.lineId} className="flex items-center justify-between text-sm bg-[var(--surface-2)] rounded-xl px-3 py-2">
-                <div>
-                  <p className="font-semibold">{l.name}</p>
-                  <p className="text-xs text-[var(--muted)]">{l.qty} × {fmt(l.price)} K.D</p>
+            {cart.map((l) => {
+              const borrow = borrowPreviewFor(l.productId);
+              return (
+                <div key={l.lineId} className="flex items-center justify-between text-sm bg-[var(--surface-2)] rounded-xl px-3 py-2">
+                  <div>
+                    <p className="font-semibold">{l.name}</p>
+                    <p className="text-xs text-[var(--muted)]">{l.qty} × {fmt(l.price)} K.D</p>
+                    {borrow && (
+                      <p className="text-[10px] text-[#C97B3D] flex items-center gap-1 mt-0.5">
+                        <ArrowLeftRight size={10} /> سيُستعار {borrow.borrowedQty} من زميل (مخصصك: {borrow.own})
+                      </p>
+                    )}
+                  </div>
+                  <div className="flex items-center gap-3">
+                    <p className="font-bold text-[var(--accent)]">{fmt(l.total)} K.D</p>
+                    <button onClick={() => removeLine(l.lineId)} className="text-[#B23A3A]"><Trash2 size={16} /></button>
+                  </div>
                 </div>
-                <div className="flex items-center gap-3">
-                  <p className="font-bold text-[var(--accent)]">{fmt(l.total)} K.D</p>
-                  <button onClick={() => removeLine(l.lineId)} className="text-[#B23A3A]"><Trash2 size={16} /></button>
-                </div>
-              </div>
-            ))}
+              );
+            })}
           </div>
         )}
       </Card>
@@ -3034,6 +3238,220 @@ function AnnouncementPopup({ announcement, onClose }) {
           <Check size={16} /> تم الاطلاع
         </Btn>
       </div>
+    </div>
+  );
+}
+
+/* ------------------------------ Seller Stock Allocation ------------------------------ */
+// Lets the admin split a product's stock into personal shares per seller.
+// A seller sells from their own share first; once it runs dry, the sale
+// automatically borrows the remainder from whichever colleague still has
+// stock left for that same product (see consumeAllocation in App). Products
+// nobody has assigned a share for stay completely unrestricted, exactly as
+// before — this page is only where that opt-in choice is made.
+function StockAllocationPage({ products, users, currentUser, isAdmin, allocations, onSave, onConfirm }) {
+  const sellersOnly = users.filter((u) => u.role === "seller");
+  const managedProductIds = new Set(allocations.map((a) => a.productId));
+  const [productId, setProductId] = useState("");
+  const [draft, setDraft] = useState({});
+  const [search, setSearch] = useState("");
+
+  const product = products.find((p) => p.id === productId) || null;
+
+  useEffect(() => { setDraft({}); }, [productId]);
+
+  const recordFor = (sellerId) => allocations.find((a) => a.sellerId === sellerId && a.productId === productId) || null;
+
+  const productAllocations = allocations.filter((a) => a.productId === productId);
+  const totalAllocated = productAllocations.reduce((s, a) => s + a.allocated, 0);
+  const totalRemaining = productAllocations.reduce((s, a) => s + a.remaining, 0);
+  const totalSold = totalAllocated - totalRemaining;
+  const unassigned = product ? Math.max(0, product.stock - totalAllocated) : 0;
+
+  const saveSeller = (seller) => {
+    if (!product) return;
+    const raw = draft[seller.id];
+    if (raw === undefined || raw === "") return;
+    const newAllocated = Math.max(0, Math.floor(Number(raw) || 0));
+    const existing = recordFor(seller.id);
+    let next;
+    if (existing) {
+      const delta = newAllocated - existing.allocated;
+      const nextRemaining = Math.max(0, Math.min(newAllocated, existing.remaining + delta));
+      next = allocations.map((a) => (a.id === existing.id ? { ...a, allocated: newAllocated, remaining: nextRemaining, sellerName: seller.name, productName: product.name } : a));
+    } else {
+      if (newAllocated <= 0) return;
+      next = [...allocations, { id: uid(), sellerId: seller.id, sellerName: seller.name, productId, productName: product.name, allocated: newAllocated, remaining: newAllocated }];
+    }
+    onSave(next, `${product.name} ← ${seller.name}: ${newAllocated} قطعة`);
+    setDraft((d) => ({ ...d, [seller.id]: undefined }));
+  };
+
+  const equalDistribute = () => {
+    if (!product || sellersOnly.length === 0) return;
+    onConfirm(
+      `سيتم توزيع كامل كمية "${product.name}" (${product.stock} قطعة) بالتساوي على ${sellersOnly.length} بائع، ما يستبدل أي توزيع سابق لهذا المنتج. هل تريد المتابعة؟`,
+      () => {
+        const base = Math.floor(product.stock / sellersOnly.length);
+        let remainder = product.stock - base * sellersOnly.length;
+        const others = allocations.filter((a) => a.productId !== productId);
+        const fresh = sellersOnly.map((s) => {
+          const qty = base + (remainder-- > 0 ? 1 : 0);
+          return { id: uid(), sellerId: s.id, sellerName: s.name, productId, productName: product.name, allocated: qty, remaining: qty };
+        });
+        onSave([...others, ...fresh], `توزيع بالتساوي: ${product.name}`);
+      }
+    );
+  };
+
+  const clearProduct = () => {
+    if (!product) return;
+    onConfirm(`سيتم إلغاء توزيع "${product.name}" على البائعين بالكامل (لن يتأثر إجمالي المخزون، ويعود البيع منه حراً للجميع). هل تريد المتابعة؟`, () => {
+      onSave(allocations.filter((a) => a.productId !== productId), `إلغاء توزيع: ${product.name}`);
+    });
+  };
+
+  const filteredProducts = products.filter((p) => p.name.toLowerCase().includes(search.trim().toLowerCase()));
+
+  /* ---------------- Seller: read-only view of their own shares ---------------- */
+  if (!isAdmin) {
+    const mine = allocations
+      .filter((a) => a.sellerId === currentUser.id)
+      .sort((a, b) => a.remaining - b.remaining);
+    return (
+      <div className="space-y-5">
+        <h2 className="text-xl font-bold flex items-center gap-2"><Boxes size={22} /> مخزوني المخصص</h2>
+        <p className="text-sm text-[var(--muted)]">
+          هذه هي الكميات التي خصصها لك المدير من كل منتج. عند بيعك لكامل كميتك من منتج ما، يُستكمل البيع تلقائياً من مخزون أحد زملائك.
+        </p>
+        {mine.length === 0 ? (
+          <Card className="p-8"><EmptyState text="لم يتم تخصيص أي منتج لك بعد — بإمكانك البيع من المخزون العام بحرية" /></Card>
+        ) : (
+          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
+            {mine.map((a) => {
+              const sold = a.allocated - a.remaining;
+              const low = a.remaining <= 0;
+              return (
+                <Card key={a.id} className="p-4 card-hover">
+                  <div className="flex justify-between items-start gap-2">
+                    <p className="font-bold truncate">{a.productName}</p>
+                    <span className={`text-[10px] font-bold px-2 py-1 rounded-full shrink-0 ${low ? "bg-[#FBEAEA] text-[#B23A3A]" : "bg-[#EAF6EF] text-[#3F7D57]"}`}>
+                      {low ? "نفدت حصتك" : "متاح"}
+                    </span>
+                  </div>
+                  <p className={`text-sm font-bold mt-2 ${low ? "text-[#B23A3A]" : "text-[#3F7D57]"}`}>المتبقي لك: {a.remaining} من {a.allocated}</p>
+                  <p className="text-xs text-[var(--muted)] mt-1">تم بيع {sold} قطعة من حصتك</p>
+                  <div className="w-full h-1.5 bg-[var(--surface-3)] rounded-full mt-2 overflow-hidden">
+                    <div className="h-full bg-[var(--accent)]" style={{ width: `${a.allocated ? Math.min(100, (a.remaining / a.allocated) * 100) : 0}%` }} />
+                  </div>
+                </Card>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    );
+  }
+
+  /* ---------------- Admin: assign & manage per-seller shares ---------------- */
+  return (
+    <div className="space-y-5">
+      <h2 className="text-xl font-bold flex items-center gap-2"><Boxes size={22} /> توزيع المخزون على البائعين</h2>
+      <p className="text-sm text-[var(--muted)]">
+        اختر منتجاً وخصّص لكل بائع كمية من مخزونه الشخصي. عند بيع بائع لكامل كميته، يُستكمل البيع تلقائياً من مخزون زميل آخر لديه رصيد متبقٍ من نفس المنتج.
+      </p>
+
+      {sellersOnly.length === 0 ? (
+        <Card className="p-8"><EmptyState text="لا يوجد بائعون مسجّلون بعد لتوزيع المخزون عليهم" /></Card>
+      ) : (
+        <>
+          <Card className="p-4 space-y-3">
+            <div className="relative">
+              <Search size={15} className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--muted)]" />
+              <input className={inputCls + " pr-9"} placeholder="بحث عن منتج..." value={search} onChange={(e) => setSearch(e.target.value)} />
+            </div>
+            <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-2 max-h-64 overflow-y-auto">
+              {filteredProducts.map((p) => {
+                const isManaged = managedProductIds.has(p.id);
+                const active = p.id === productId;
+                return (
+                  <button
+                    key={p.id}
+                    onClick={() => setProductId(p.id)}
+                    className={`text-right px-3 py-2 rounded-xl border transition text-sm ${
+                      active ? "border-[var(--accent)] bg-[var(--surface-3)] font-bold" : "border-[var(--border)] hover:border-[var(--accent)]"
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <span className="truncate">{p.name}</span>
+                      {isManaged && <Boxes size={13} className="text-[var(--accent)] shrink-0" />}
+                    </div>
+                    <span className="text-[11px] text-[var(--muted)]">المخزون الكلي: {p.stock}</span>
+                  </button>
+                );
+              })}
+            </div>
+          </Card>
+
+          {product && (
+            <>
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                <StatCard label="المخزون الكلي" value={product.stock} color="var(--accent-dark)" icon={Package} />
+                <StatCard label="مُخصص للبائعين" value={totalAllocated} color="var(--accent)" icon={Boxes} />
+                <StatCard label="غير مُخصص" value={unassigned} color="#8A7B6C" icon={Package} />
+                <StatCard label="تم بيعه من الحصص" value={totalSold} color="#3F7D57" icon={TrendingUp} />
+              </div>
+
+              <Card className="p-4">
+                <div className="flex items-center justify-between mb-3 gap-2 flex-wrap">
+                  <h3 className="font-bold">توزيع "{product.name}" على البائعين</h3>
+                  <div className="flex gap-2">
+                    <Btn variant="ghost" onClick={equalDistribute}><Users2 size={15} /> توزيع بالتساوي</Btn>
+                    {productAllocations.length > 0 && (
+                      <Btn variant="outline" onClick={clearProduct}><Trash2 size={15} /> إلغاء التوزيع</Btn>
+                    )}
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  {sellersOnly.map((s) => {
+                    const rec = recordFor(s.id);
+                    const value = draft[s.id] !== undefined ? draft[s.id] : (rec ? String(rec.allocated) : "");
+                    const dirty = draft[s.id] !== undefined && draft[s.id] !== (rec ? String(rec.allocated) : "");
+                    const sold = rec ? rec.allocated - rec.remaining : 0;
+                    const low = rec && rec.remaining <= 0 && rec.allocated > 0;
+                    return (
+                      <div key={s.id} className="flex items-center gap-3 bg-[var(--surface-2)] rounded-xl px-3 py-2.5 flex-wrap">
+                        <div className="flex-1 min-w-[120px]">
+                          <p className="font-semibold text-sm">{s.name}</p>
+                          {rec ? (
+                            <p className={`text-xs ${low ? "text-[#B23A3A]" : "text-[var(--muted)]"}`}>
+                              المتبقي: {rec.remaining} / {rec.allocated} — تم بيع {sold}
+                            </p>
+                          ) : (
+                            <p className="text-xs text-[var(--muted)]">لم يُخصص له شيء بعد</p>
+                          )}
+                        </div>
+                        <input
+                          type="number"
+                          min="0"
+                          className={inputCls + " !w-24 !py-1.5"}
+                          placeholder="الكمية"
+                          value={value}
+                          onChange={(e) => setDraft((d) => ({ ...d, [s.id]: e.target.value }))}
+                        />
+                        <Btn variant={dirty ? "primary" : "ghost"} className="!px-3 !py-1.5" disabled={!dirty} onClick={() => saveSeller(s)}>
+                          <Check size={14} /> حفظ
+                        </Btn>
+                      </div>
+                    );
+                  })}
+                </div>
+              </Card>
+            </>
+          )}
+        </>
+      )}
     </div>
   );
 }
