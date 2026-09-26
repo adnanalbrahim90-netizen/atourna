@@ -201,6 +201,141 @@ function markRequestResolutionSeen(userId, requestId) {
   window.localStorage.setItem(`atourna_seen_requests_${userId}`, JSON.stringify(Array.from(seen)));
 }
 
+// Incoming stock requests this device has already raised a phone
+// notification for — so an old pending request doesn't buzz the phone again
+// on every reload (the in-page popup still shows until answered).
+function getNotifiedIncomingRequests(userId) {
+  try {
+    const raw = window.localStorage.getItem(`atourna_notified_incoming_${userId}`);
+    return raw ? JSON.parse(raw) : [];
+  } catch {
+    return [];
+  }
+}
+function markIncomingRequestNotified(userId, requestId) {
+  const seen = new Set(getNotifiedIncomingRequests(userId));
+  seen.add(requestId);
+  window.localStorage.setItem(`atourna_notified_incoming_${userId}`, JSON.stringify(Array.from(seen).slice(-300)));
+}
+
+const notificationsSupported = () => typeof window !== "undefined" && "Notification" in window && "serviceWorker" in navigator;
+const isIOSBrowserTab = () =>
+  typeof navigator !== "undefined" &&
+  /iphone|ipad|ipod/i.test(navigator.userAgent) &&
+  !(window.navigator.standalone || window.matchMedia?.("(display-mode: standalone)").matches);
+
+/* ---------------------- Real phone notifications (Web Push) ---------------------- */
+// Each device that allows notifications registers a push subscription,
+// stored in the shared data under PUSH_SUBS_KEY tagged with the logged-in
+// user. To notify someone, the app asks the site's Cloudflare Worker
+// (/api/push/send) to deliver to that user's devices — it arrives even when
+// the app is fully closed.
+const PUSH_SUBS_KEY = "perfume_push_subscriptions";
+
+function urlB64ToUint8Array(b64) {
+  const pad = "=".repeat((4 - (b64.length % 4)) % 4);
+  const raw = atob((b64 + pad).replace(/-/g, "+").replace(/_/g, "/"));
+  return Uint8Array.from(raw, (c) => c.charCodeAt(0));
+}
+
+// Subscribes this device (if permitted) and links it to `user`. Returns true
+// when real push is active on this device.
+async function registerPushForUser(user) {
+  try {
+    if (!user || !notificationsSupported() || Notification.permission !== "granted" || !("PushManager" in window)) return false;
+    const keyRes = await fetch("/api/push/key");
+    if (!keyRes.ok) return false; // Worker not deployed / key not configured yet
+    const { publicKey } = await keyRes.json();
+    if (!publicKey) return false;
+    const reg = await navigator.serviceWorker.ready;
+    const appKey = urlB64ToUint8Array(publicKey);
+    let sub = await reg.pushManager.getSubscription();
+    // If the device was subscribed with a different key, start fresh.
+    const existingKey = sub?.options?.applicationServerKey ? new Uint8Array(sub.options.applicationServerKey) : null;
+    if (sub && existingKey && existingKey.join(",") !== appKey.join(",")) {
+      await sub.unsubscribe();
+      sub = null;
+    }
+    if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: appKey });
+    const data = sub.toJSON();
+    const list = await storeGet(PUSH_SUBS_KEY, []);
+    const current = list.find((x) => x.endpoint === data.endpoint);
+    if (!current || current.userId !== user.id) {
+      const next = [
+        ...list.filter((x) => x.endpoint !== data.endpoint),
+        { endpoint: data.endpoint, keys: data.keys, userId: user.id, userName: user.name, updatedAt: todayISO() },
+      ].slice(-200);
+      await storeSet(PUSH_SUBS_KEY, next);
+    }
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+// On logout: stop sending this user's notifications to this device.
+async function unlinkPushDevice() {
+  try {
+    if (!("serviceWorker" in navigator)) return;
+    const reg = await navigator.serviceWorker.getRegistration();
+    const sub = await reg?.pushManager?.getSubscription();
+    if (!sub) return;
+    const list = await storeGet(PUSH_SUBS_KEY, []);
+    await storeSet(PUSH_SUBS_KEY, list.filter((x) => x.endpoint !== sub.endpoint));
+  } catch {
+    // ignore
+  }
+}
+
+// Delivers a notification to every device of the given users. Never throws.
+async function sendPushToUsers(userIds, payload) {
+  try {
+    const list = await storeGet(PUSH_SUBS_KEY, []);
+    const subs = list.filter((x) => userIds.includes(x.userId));
+    if (subs.length === 0) return;
+    const res = await fetch("/api/push/send", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ subscriptions: subs.map(({ endpoint, keys }) => ({ endpoint, keys })), payload }),
+    });
+    if (!res.ok) return;
+    const result = await res.json();
+    if (result.expired?.length) {
+      // Clean up devices that uninstalled the app or blocked notifications.
+      const fresh = await storeGet(PUSH_SUBS_KEY, []);
+      await storeSet(PUSH_SUBS_KEY, fresh.filter((x) => !result.expired.includes(x.endpoint)));
+    }
+  } catch {
+    // notifications are best-effort
+  }
+}
+
+// Shows a system (phone / desktop) notification through the service worker —
+// Android Chrome only allows notifications that way. Silently does nothing
+// when unsupported or not permitted, so it can never break the app.
+async function showSystemNotification(title, body, tag) {
+  try {
+    if (!notificationsSupported() || Notification.permission !== "granted") return;
+    const options = {
+      body,
+      tag,
+      icon: "/icon-192.png",
+      badge: "/icon-192.png",
+      dir: "rtl",
+      lang: "ar",
+      vibrate: [200, 100, 200],
+      renotify: true,
+      requireInteraction: true,
+      data: { url: "/" },
+    };
+    const reg = await navigator.serviceWorker.getRegistration();
+    if (reg) await reg.showNotification(title, options);
+    else new Notification(title, options);
+  } catch {
+    // ignore — notifications are a convenience, never critical
+  }
+}
+
 async function exportSalesExcel(label, list, companyName) {
   const workbook = new ExcelJS.Workbook();
   workbook.creator = companyName || "عطورنا";
@@ -712,6 +847,81 @@ function StockRequestModal({ product, sellerAllocations, users, seller, onSend, 
   );
 }
 
+// In-page alert that pops up for the colleague a stock request was sent to,
+// so they can approve or decline on the spot. Appears within seconds of the
+// request being sent (via the shared polling loop), one request at a time.
+function IncomingRequestPopup({ request, myRemaining, pendingCount, onRespond, onLater }) {
+  const [busy, setBusy] = useState(false);
+  const respond = async (approve) => {
+    setBusy(true);
+    try { await onRespond(request.id, approve); } finally { setBusy(false); }
+  };
+  const partial = myRemaining < request.qty;
+  return (
+    <div className="fixed inset-0 z-[9999] flex items-center justify-center bg-black/55 p-4 announce-backdrop" dir="rtl">
+      <div className="bg-[var(--surface)] rounded-2xl w-full max-w-sm p-6 text-center announce-pop">
+        <div className="w-14 h-14 rounded-full bg-[#FFF6E5] flex items-center justify-center mx-auto mb-3">
+          <ArrowLeftRight size={26} className="text-[#C97B3D]" />
+        </div>
+        <p className="text-[11px] font-semibold text-[#C97B3D] mb-1">
+          طلب مخزون جديد{pendingCount > 1 ? ` (1 من ${pendingCount})` : ""}
+        </p>
+        <h3 className="font-bold text-lg mb-2">{request.requesterName} يطلب منك</h3>
+        <div className="bg-[var(--surface-2)] rounded-xl py-3 px-4 mb-3">
+          <p className="text-3xl font-extrabold text-[var(--accent-dark)]">{request.qty}</p>
+          <p className="text-sm font-semibold">{request.productName}</p>
+        </div>
+        <p className="text-xs text-[var(--muted)] mb-1">
+          رصيدك الحالي من هذا المنتج: <b className="text-[var(--text)]">{myRemaining}</b>
+        </p>
+        {partial && (
+          <p className="text-[11px] text-[#B23A3A] mb-1">
+            {myRemaining > 0 ? `رصيدك لا يكفي — عند الموافقة سيُنقل ${myRemaining} فقط.` : "لم يعد لديك رصيد من هذا المنتج — الموافقة لن تنقل شيئاً."}
+          </p>
+        )}
+        <p className="text-[11px] text-[var(--muted)] mb-5">عند الموافقة تنتقل الكمية من حصتك إلى حصته، وعند الرفض لا يتغير شيء.</p>
+        <div className="flex gap-2">
+          <Btn className="flex-1" disabled={busy} onClick={() => respond(true)} style={{ background: "#3F7D57" }}>
+            <Check size={16} /> موافقة
+          </Btn>
+          <Btn variant="danger" className="flex-1" disabled={busy} onClick={() => respond(false)}>
+            <X size={16} /> رفض
+          </Btn>
+        </div>
+        <button onClick={onLater} disabled={busy} className="mt-3 text-xs text-[var(--muted)] hover:text-[var(--text)] underline-offset-2 hover:underline">
+          لاحقاً (يبقى في الإشعارات 🔔)
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// Asks once (per device) to allow phone notifications, so stock requests
+// reach the seller even while the app isn't on screen. Browsers only allow
+// the permission prompt after a tap, hence the explicit button.
+function NotificationPermissionBanner({ permission, onEnable, onHide }) {
+  if (isIOSBrowserTab()) {
+    return (
+      <Card className="p-3 mb-4 flex items-start gap-2.5">
+        <Bell size={18} className="text-[var(--accent)] shrink-0 mt-0.5" />
+        <p className="text-xs text-[var(--muted)] flex-1 leading-relaxed">
+          لتصلك إشعارات طلبات المخزون على الآيفون: افتح التطبيق في Safari ← زر المشاركة ← "إضافة إلى الشاشة الرئيسية"، ثم افتحه من أيقونته وفعّل الإشعارات.
+        </p>
+        <button onClick={onHide} className="p-1 text-[var(--muted)] shrink-0"><X size={16} /></button>
+      </Card>
+    );
+  }
+  if (permission !== "default") return null;
+  return (
+    <Card className="p-3 mb-4 flex items-center gap-2.5 flex-wrap">
+      <Bell size={18} className="text-[var(--accent)] shrink-0" />
+      <p className="text-xs text-[var(--muted)] flex-1 min-w-[180px]">فعّل إشعارات الجوال لتصلك طلبات المخزون من زملائك فور إرسالها.</p>
+      <Btn className="!py-1.5 !px-3 text-xs" onClick={onEnable}><Bell size={14} /> تفعيل الإشعارات</Btn>
+      <button onClick={onHide} className="p-1 text-[var(--muted)]" title="إخفاء"><X size={16} /></button>
+    </Card>
+  );
+}
+
 function SetupScreen({ onComplete }) {
   const [name, setName] = useState("");
   const [username, setUsername] = useState("");
@@ -839,6 +1049,7 @@ export default function App() {
   const [confirmState, setConfirmState] = useState(null); // { message, onConfirm }
   const sidebarRef = useRef(null); // desktop sidebar's scrollable nav list, for the up/down scroll buttons
   const mobileNavRef = useRef(null); // same, for the mobile nav drawer
+  const pushActiveRef = useRef(false); // true once real push notifications are active on this device
 
   const askConfirm = useCallback((message, onConfirm) => {
     setConfirmState({ message, onConfirm });
@@ -1022,18 +1233,75 @@ export default function App() {
     );
     if (newlyResolved.length === 0) return;
     newlyResolved.forEach((r) => {
+      let msg;
       if (r.status === "approved") {
-        showToast(
+        msg =
           (r.approvedQty ?? r.qty) >= r.qty
             ? `وافق ${r.targetSellerName} على طلبك، وانتقلت إليك ${r.approvedQty ?? r.qty} من ${r.productName}`
-            : `وافق ${r.targetSellerName} جزئياً على طلبك — وصلتك ${r.approvedQty} فقط من ${r.qty} من ${r.productName}`
-        );
+            : `وافق ${r.targetSellerName} جزئياً على طلبك — وصلتك ${r.approvedQty} فقط من ${r.qty} من ${r.productName}`;
       } else {
-        showToast(`اعتذر ${r.targetSellerName} عن طلبك لـ ${r.qty} من ${r.productName}`);
+        msg = `اعتذر ${r.targetSellerName} عن طلبك لـ ${r.qty} من ${r.productName}`;
       }
+      showToast(msg);
+      if (!pushActiveRef.current) showSystemNotification(r.status === "approved" ? "✅ تمت الموافقة على طلبك" : "❌ تم رفض طلبك", msg, `req-result-${r.id}`);
       markRequestResolutionSeen(currentUser.id, r.id);
     });
   }, [stockRequests, currentUser]);
+
+  // Stock requests a colleague sent to *me* that still need an answer.
+  const incomingPending = currentUser
+    ? stockRequests
+        .filter((r) => r.targetSellerId === currentUser.id && r.status === "pending")
+        .sort((a, b) => new Date(a.createdAt) - new Date(b.createdAt))
+    : [];
+  // Requests the user chose "later" for, this session only — they stay in
+  // the notifications bell and pop up again on the next visit.
+  const [snoozedRequestIds, setSnoozedRequestIds] = useState([]);
+  const incomingPopup = incomingPending.find((r) => !snoozedRequestIds.includes(r.id)) || null;
+
+  // Raise a phone / system notification (plus a short vibration) the moment
+  // a new request for me arrives — picked up by the shared polling loop
+  // within a few seconds of the colleague sending it. Each request only
+  // buzzes the phone once per device.
+  useEffect(() => {
+    if (!currentUser) return;
+    const notified = new Set(getNotifiedIncomingRequests(currentUser.id));
+    const fresh = incomingPending.filter((r) => !notified.has(r.id));
+    if (fresh.length === 0) return;
+    fresh.forEach((r) => {
+      if (!pushActiveRef.current) showSystemNotification(
+        "📦 طلب مخزون من زميل",
+        `${r.requesterName} يطلب ${r.qty} من ${r.productName} من حصتك — افتح التطبيق للموافقة أو الرفض`,
+        `req-${r.id}`
+      );
+      markIncomingRequestNotified(currentUser.id, r.id);
+    });
+    try { navigator.vibrate?.([200, 100, 200]); } catch { /* not supported */ }
+  }, [stockRequests, currentUser]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const [notifPermission, setNotifPermission] = useState(() => (notificationsSupported() ? Notification.permission : "unsupported"));
+  const [notifBannerHidden, setNotifBannerHidden] = useState(() => window.localStorage.getItem("atourna_notif_banner_hidden") === "1");
+  // Real push (works with the app closed) — active once this device is
+  // subscribed through the Worker. While active, the in-app local
+  // notifications below are skipped so the phone doesn't buzz twice.
+  const [pushActive, setPushActive] = useState(false);
+  useEffect(() => {
+    if (!currentUser || notifPermission !== "granted") { pushActiveRef.current = false; setPushActive(false); return; }
+    let cancelled = false;
+    registerPushForUser(currentUser).then((ok) => { pushActiveRef.current = ok; if (!cancelled) setPushActive(ok); });
+    return () => { cancelled = true; };
+  }, [currentUser?.id, notifPermission]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  const enableNotifications = async () => {
+    if (!notificationsSupported()) return;
+    try {
+      const result = await Notification.requestPermission();
+      setNotifPermission(result);
+      if (result === "granted") {
+        showSystemNotification("🔔 تم تفعيل الإشعارات", "ستصلك تنبيهات طلبات المخزون على هذا الجهاز", "notif-enabled");
+      }
+    } catch { /* ignore */ }
+  };
 
   // Dark mode is a per-device preference — store it directly in this
   // browser's own localStorage, never in the shared business-data store.
@@ -1147,8 +1415,37 @@ export default function App() {
   // Records a gifted, damaged, or opened-for-testing unit against a product
   // and deducts it from stock immediately.
   const logStockAdjustment = async (product, type, qty, note) => {
-    const q = Math.min(qty, product.stock);
+    let q = Math.min(qty, product.stock);
     if (q <= 0) return;
+    const typeNames = { gift: "هدية", damage: "تالف", tester: "تجربة" };
+
+    // For a product split between sellers, a gift / damaged / opened tester
+    // piece is taken out of the recording person's own share first (it was
+    // in their hands), then from the undistributed pool — never silently
+    // from a colleague's share. Both the allocation and its "received"
+    // total go down, so "بحوزته" and "باع" stay accurate.
+    let allocationSources = [];
+    let updatedAllocations = null;
+    if (isProductManaged(sellerAllocations, product.id)) {
+      const own = getAllocationRecord(sellerAllocations, currentUser.id, product.id);
+      const ownLeft = own ? own.remaining : 0;
+      const heldByAll = totalRemainingForProduct(sellerAllocations, product.id);
+      const freePool = Math.max(0, product.stock - heldByAll);
+      const maxAllowed = ownLeft + freePool;
+      if (maxAllowed <= 0) {
+        showToast(`لا يمكن التسجيل: ليس لديك رصيد من "${product.name}" في حصتك، والكمية الموجودة موزّعة على بائعين آخرين`);
+        return;
+      }
+      if (q > maxAllowed) q = maxAllowed;
+      const fromOwn = Math.min(ownLeft, q);
+      if (fromOwn > 0) {
+        updatedAllocations = sellerAllocations.map((a) =>
+          a.id === own.id ? { ...a, allocated: a.allocated - fromOwn, remaining: a.remaining - fromOwn } : a
+        );
+        allocationSources = [{ sellerId: currentUser.id, sellerName: currentUser.name, productId: product.id, qty: fromOwn }];
+      }
+    }
+
     const updatedProducts = products.map((p) => (p.id === product.id ? { ...p, stock: p.stock - q } : p));
     const log = {
       id: uid(),
@@ -1158,14 +1455,32 @@ export default function App() {
       qty: q,
       note: note?.trim() || "",
       date: todayISO(),
+      byUserId: currentUser.id,
       byUserName: currentUser.name,
+      allocationSources,
     };
     await persistProducts(updatedProducts);
     await persistStockLogs([log, ...stockLogs]);
+    if (updatedAllocations) {
+      const src = allocationSources[0];
+      const before = getAllocationRecord(sellerAllocations, currentUser.id, product.id).allocated;
+      await persistSellerAllocations(updatedAllocations);
+      await appendAllocationLog([
+        makeAllocationLogEntry({
+          byUser: currentUser, type: "stock_adjust", productId: product.id, productName: product.name,
+          sellerId: currentUser.id, sellerName: currentUser.name, before, after: before - src.qty,
+          note: `${typeNames[type] || "تعديل"}${log.note ? ` — ${log.note}` : ""}`,
+        }),
+      ]);
+    }
     const labels = { gift: "تم تسجيل الهدية وخصمها من المخزون", damage: "تم تسجيل التالف وخصمه من المخزون", tester: "تم تسجيل فتح المنتج للتجربة وخصمه من المخزون" };
     const logLabels = { gift: "تسجيل هدية", damage: "تسجيل تالف", tester: "تسجيل فتح للتجربة" };
     logActivity(currentUser, logLabels[type] || "تعديل مخزون", `${product.name} × ${q}`);
-    showToast(labels[type] || "تم تحديث المخزون");
+    showToast(
+      q < qty
+        ? `تم تسجيل ${q} فقط من ${qty} — هذا كل ما في حصتك والمخزون غير الموزّع`
+        : (labels[type] || "تم تحديث المخزون") + (allocationSources.length ? " ومن حصتك المخصصة" : "")
+    );
   };
 
   const deleteStockLog = async (id) => {
@@ -1173,10 +1488,28 @@ export default function App() {
     if (log) {
       const updatedProducts = products.map((p) => (p.id === log.productId ? { ...p, stock: p.stock + log.qty } : p));
       await persistProducts(updatedProducts);
+      // Give the pieces back to the share they were taken from.
+      if (log.allocationSources && log.allocationSources.length) {
+        const entries = [];
+        const next = sellerAllocations.map((a) => {
+          const src = log.allocationSources.find((x) => x.sellerId === a.sellerId && x.productId === a.productId);
+          if (!src) return a;
+          entries.push(
+            makeAllocationLogEntry({
+              byUser: currentUser, type: "stock_adjust_undo", productId: a.productId, productName: a.productName,
+              sellerId: a.sellerId, sellerName: a.sellerName, before: a.allocated, after: a.allocated + src.qty,
+              note: "حذف سجل هدية/تالف/تجربة",
+            })
+          );
+          return { ...a, allocated: a.allocated + src.qty, remaining: a.remaining + src.qty };
+        });
+        await persistSellerAllocations(next);
+        await appendAllocationLog(entries);
+      }
     }
     await persistStockLogs(stockLogs.filter((l) => l.id !== id));
     logActivity(currentUser, "حذف سجل هدية/تالف", log ? `${log.productName} × ${log.qty}` : "");
-    showToast("تم حذف السجل وإرجاع الكمية إلى المخزون");
+    showToast("تم حذف السجل وإرجاع الكمية إلى المخزون" + (log?.allocationSources?.length ? " والحصة المخصصة" : ""));
   };
 
   const persistExpenses = async (next) => { setExpenses(next); await storeSet("perfume_expenses", next); };
@@ -1230,6 +1563,11 @@ export default function App() {
     if (!approve) {
       await persistStockRequests(stockRequests.map((r) => (r.id === requestId ? { ...r, status: "rejected", respondedAt: todayISO() } : r)));
       showToast(`تم رفض طلب ${req.requesterName} لـ ${req.productName}`);
+      sendPushToUsers([req.requesterId], {
+        title: "❌ تم رفض طلبك",
+        body: `اعتذر ${currentUser.name} عن طلبك لـ ${req.qty} من ${req.productName}`,
+        tag: `req-result-${req.id}`,
+      });
       logActivity(currentUser, "رفض طلب نقل مخزون", `${req.productName} - طلب ${req.requesterName} لـ ${req.qty} قطعة`);
       return;
     }
@@ -1270,6 +1608,14 @@ export default function App() {
         : `تمت الموافقة جزئياً — تم تحويل ${transferredQty} فقط من ${req.qty} المطلوبة (الكمية المتبقية لديك لم تعد كافية)`
     );
     logActivity(currentUser, "الموافقة على طلب نقل مخزون", `${req.productName} - ${transferredQty} قطعة إلى ${req.requesterName}`);
+    sendPushToUsers([req.requesterId], {
+      title: "✅ تمت الموافقة على طلبك",
+      body:
+        transferredQty >= req.qty
+          ? `وافق ${currentUser.name} وانتقلت إليك ${transferredQty} من ${req.productName}`
+          : `وافق ${currentUser.name} جزئياً — وصلتك ${transferredQty} فقط من ${req.qty} من ${req.productName}`,
+      tag: `req-result-${req.id}`,
+    });
   };
   const saveSellerGoal = async (userId, amount) => {
     await persistSellerGoals({ ...sellerGoals, [userId]: Number(amount) || 0 });
@@ -1510,6 +1856,16 @@ export default function App() {
         />
       )}
 
+      {incomingPopup && announcementQueue.length === 0 && (
+        <IncomingRequestPopup
+          request={incomingPopup}
+          myRemaining={remainingForSeller(sellerAllocations, currentUser.id, incomingPopup.productId)}
+          pendingCount={incomingPending.length}
+          onRespond={respondStockRequest}
+          onLater={() => setSnoozedRequestIds((ids) => [...ids, incomingPopup.id])}
+        />
+      )}
+
       {confirmState && (
         <ConfirmModal
           message={confirmState.message}
@@ -1558,9 +1914,12 @@ export default function App() {
               onOpenAnnouncement={(id) => markAnnouncementSeen(currentUser.id, id)}
               stockRequests={stockRequests}
               onRespondRequest={respondStockRequest}
+              notifPermission={notifPermission}
+              pushActive={pushActive}
+              onEnableNotifications={enableNotifications}
             />
             <button
-              onClick={() => { logActivity(currentUser, "تسجيل خروج", ""); window.localStorage.removeItem("atourna_session_username"); setCurrentUser(null); }}
+              onClick={() => { logActivity(currentUser, "تسجيل خروج", ""); unlinkPushDevice(); window.localStorage.removeItem("atourna_session_username"); setCurrentUser(null); }}
               className="p-2 rounded-lg text-[#B23A3A] hover:bg-[#FBEAEA]"
               title="تسجيل الخروج"
             >
@@ -1646,6 +2005,13 @@ export default function App() {
 
         {/* Main content */}
         <main className="no-print flex-1 min-w-0 px-4 py-5 pb-24 md:pb-8">
+        {!notifBannerHidden && (notifPermission !== "unsupported" || isIOSBrowserTab()) && (
+          <NotificationPermissionBanner
+            permission={notifPermission}
+            onEnable={enableNotifications}
+            onHide={() => { setNotifBannerHidden(true); window.localStorage.setItem("atourna_notif_banner_hidden", "1"); }}
+          />
+        )}
         <div key={view} className="view-transition">
           {view === "dashboard" && (
             <Dashboard sales={sales} products={products} users={users} sellerGoals={sellerGoals} currentUser={currentUser} setView={setView} activeTheme={activeTheme} />
@@ -1685,6 +2051,11 @@ export default function App() {
                 };
                 await persistStockRequests([request, ...stockRequests]);
                 showToast(`تم إرسال طلبك إلى ${targetSeller.name}، بانتظار موافقته`);
+                sendPushToUsers([targetSeller.id], {
+                  title: "📦 طلب مخزون من زميل",
+                  body: `${requester.name} يطلب ${qty} من ${product.name} من حصتك — افتح التطبيق للموافقة أو الرفض`,
+                  tag: `req-${request.id}`,
+                });
                 logActivity(requester, "طلب نقل مخزون", `${product.name} - طلب ${qty} من ${targetSeller.name}`);
               }}
             />
@@ -1987,7 +2358,7 @@ function NavBtn({ item, active, onClick }) {
 
 /* ---------------------------------- Notifications Bell ---------------------------------- */
 
-function NotificationsBell({ open, setOpen, announcements, currentUser, products, sales, isAdmin, setView, onOpenAnnouncement, stockRequests = [], onRespondRequest }) {
+function NotificationsBell({ open, setOpen, announcements, currentUser, products, sales, isAdmin, setView, onOpenAnnouncement, stockRequests = [], onRespondRequest, notifPermission, pushActive, onEnableNotifications }) {
   const panelRef = useRef(null);
   const [respondingId, setRespondingId] = useState(null); // guards against double-clicking approve/reject
 
@@ -2045,7 +2416,18 @@ function NotificationsBell({ open, setOpen, announcements, currentUser, products
         <div className="absolute left-0 top-12 w-80 max-w-[90vw] bg-[var(--surface)] border border-[var(--border)] rounded-2xl shadow-xl z-50 announce-pop overflow-hidden" dir="rtl">
           <div className="px-4 py-3 border-b border-[var(--border)] flex items-center gap-2">
             <Bell size={16} className="text-[var(--accent)]" />
-            <p className="font-bold text-sm">الإشعارات</p>
+            <p className="font-bold text-sm flex-1">الإشعارات</p>
+            {notifPermission === "default" && (
+              <button onClick={onEnableNotifications} className="text-[10px] font-bold px-2 py-1 rounded-lg bg-[var(--surface-3)] text-[var(--accent-dark)] hover:bg-[var(--border)]">
+                تفعيل إشعارات الجوال
+              </button>
+            )}
+            {notifPermission === "granted" && (
+              <span className="text-[10px] text-[#3F7D57] font-semibold" title={pushActive ? "تصل حتى والتطبيق مغلق" : "تصل والتطبيق مفتوح"}>
+                إشعارات الجوال مفعّلة ✓{pushActive ? "" : " (والتطبيق مفتوح)"}
+              </span>
+            )}
+            {notifPermission === "denied" && <span className="text-[10px] text-[#B23A3A] font-semibold">الإشعارات محظورة من إعدادات المتصفح</span>}
           </div>
 
           <div className="max-h-80 overflow-y-auto divide-y divide-[var(--border)]">
@@ -3555,7 +3937,7 @@ function UsersAdmin({ users, onSave, onConfirm, currentUser, onToggleStockManage
           </div>
           <div className="text-xs text-[var(--muted)] leading-relaxed">
             <p className="font-bold text-sm text-[var(--text)] mb-0.5">صلاحية مسؤول المخزن</p>
-            صاحب هذه الصلاحية — مديراً كان أو بائعاً — يوزّع المنتجات بالعدد على جميع الحسابات، ويزيد أو ينقص حصة كل حساب، ويطّلع على سجل الحركات المفصّل بالاسم. بقية الحسابات ترى حصتها فقط. يمكنك منحها أو سحبها من زر "تعيين مسؤول مخزن" بجانب أي حساب.
+            صاحب هذه الصلاحية — مديراً كان أو بائعاً — يوزّع المنتجات بالعدد على جميع البائعين، ويزيد أو ينقص حصة كل بائع، ويطّلع على سجل الحركات المفصّل بالاسم. بقية البائعين يرون حصتهم فقط. يمكنك منحها أو سحبها من زر "تعيين مسؤول مخزن" بجانب أي حساب.
           </div>
         </Card>
       )}
@@ -3631,7 +4013,7 @@ function UsersAdmin({ users, onSave, onConfirm, currentUser, onToggleStockManage
                     <button
                       onClick={() =>
                         u.canManageStock
-                          ? onConfirm(`هل تريد سحب صلاحية "مسؤول المخزن" من ${u.name}؟ لن يتمكن بعدها من توزيع المخزون على الحسابات.`, () => onToggleStockManager(u, false))
+                          ? onConfirm(`هل تريد سحب صلاحية "مسؤول المخزن" من ${u.name}؟ لن يتمكن بعدها من توزيع المخزون على البائعين.`, () => onToggleStockManager(u, false))
                           : onToggleStockManager(u, true)
                       }
                       title={u.canManageStock ? "سحب صلاحية مسؤول المخزن" : "منح صلاحية مسؤول المخزن"}
@@ -3697,6 +4079,8 @@ const ALLOC_LOG_TYPES = {
   clear: { label: "إلغاء التوزيع", cls: "bg-[#FBEAEA] text-[#B23A3A]" },
   transfer_in: { label: "استلام من زميل", cls: "bg-[#FFF6E5] text-[#C97B3D]" },
   transfer_out: { label: "تسليم لزميل", cls: "bg-[#FFF6E5] text-[#C97B3D]" },
+  stock_adjust: { label: "هدية/تالف/تجربة", cls: "bg-[#FBEAEA] text-[#B23A3A]" },
+  stock_adjust_undo: { label: "إلغاء هدية/تالف", cls: "bg-[#EAF6EF] text-[#3F7D57]" },
 };
 const allocLogType = (e) => (e.type === "adjust" ? (e.delta >= 0 ? ALLOC_LOG_TYPES.adjust_in : ALLOC_LOG_TYPES.adjust_out) : ALLOC_LOG_TYPES[e.type] || ALLOC_LOG_TYPES.set);
 
@@ -3762,7 +4146,7 @@ function StockAllocationPage({ products, users, currentUser, canManage, allocati
   const entry = (seller, type, before, after, note) =>
     makeAllocationLogEntry({ byUser: currentUser, type, productId, productName: product.name, sellerId: seller.id, sellerName: seller.name, before, after, note });
 
-  const overPoolMsg = (need) => `لا يوجد مخزون حر كافٍ: المطلوب ${need} والمتاح غير الموزَّع ${freePool} فقط. زِد كمية المنتج في صفحة المخزون أولاً، أو اسحب من حصة حساب آخر.`;
+  const overPoolMsg = (need) => `لا يوجد مخزون حر كافٍ: المطلوب ${need} والمتاح غير الموزَّع ${freePool} فقط. زِد كمية المنتج في صفحة المخزون أولاً، أو اسحب من حصة بائع آخر.`;
 
   const saveSeller = (seller) => {
     if (!product) return;
@@ -3811,7 +4195,7 @@ function StockAllocationPage({ products, users, currentUser, canManage, allocati
   const equalDistribute = () => {
     if (!product || accounts.length === 0) return;
     onConfirm(
-      `سيتم توزيع كامل كمية "${product.name}" (${product.stock} قطعة) بالتساوي على ${accounts.length} حساب، ما يستبدل أي توزيع سابق لهذا المنتج. هل تريد المتابعة؟`,
+      `سيتم توزيع كامل كمية "${product.name}" (${product.stock} قطعة) بالتساوي على ${accounts.length} بائع، ما يستبدل أي توزيع سابق لهذا المنتج. هل تريد المتابعة؟`,
       () => {
         const base = Math.floor(product.stock / accounts.length);
         let remainder = product.stock - base * accounts.length;
@@ -3829,7 +4213,7 @@ function StockAllocationPage({ products, users, currentUser, canManage, allocati
 
   const clearProduct = () => {
     if (!product) return;
-    onConfirm(`سيتم إلغاء توزيع "${product.name}" على الحسابات بالكامل (لن يتأثر إجمالي المخزون، ويعود البيع منه حراً للجميع). هل تريد المتابعة؟`, () => {
+    onConfirm(`سيتم إلغاء توزيع "${product.name}" على البائعين بالكامل (لن يتأثر إجمالي المخزون، ويعود البيع منه حراً للجميع). هل تريد المتابعة؟`, () => {
       const logEntries = productAllocations.map((a) =>
         entry({ id: a.sellerId, name: a.sellerName }, "clear", a.allocated, 0)
       );
@@ -3908,7 +4292,7 @@ function StockAllocationPage({ products, users, currentUser, canManage, allocati
 
   const TABS = [
     ["distribute", "التوزيع", Boxes],
-    ["summary", "ملخص الحسابات", Users2],
+    ["summary", "ملخص البائعين", Users2],
     ["log", "سجل الحركات", History],
   ];
 
@@ -3916,7 +4300,7 @@ function StockAllocationPage({ products, users, currentUser, canManage, allocati
   return (
     <div className="space-y-5">
       <div className="flex items-center justify-between gap-2 flex-wrap">
-        <h2 className="text-xl font-bold flex items-center gap-2"><Boxes size={22} /> توزيع المخزون على الحسابات</h2>
+        <h2 className="text-xl font-bold flex items-center gap-2"><Boxes size={22} /> توزيع المخزون على البائعين</h2>
         <span className="text-[11px] font-bold px-2.5 py-1 rounded-full bg-[#FFF6E5] text-[#C97B3D] inline-flex items-center gap-1">
           <ShieldCheck size={12} /> {currentUser.isPrimaryAdmin ? "الحساب الرئيسي" : "مسؤول المخزن"}
         </span>
@@ -3939,11 +4323,11 @@ function StockAllocationPage({ products, users, currentUser, canManage, allocati
       {tab === "distribute" && (
         <>
           <p className="text-sm text-[var(--muted)]">
-            اختر منتجاً وخصّص لكل حساب — بائعاً كان أو مديراً — كمية منه، وزِد أو اسحب في أي وقت. لا يمكن توزيع أكثر من المخزون الفعلي غير الموزَّع، وكل حركة تُسجَّل باسم صاحبها في "سجل الحركات".
+            اختر منتجاً وخصّص لكل بائع — بما فيهم المدراء — كمية منه، وزِد أو اسحب في أي وقت. لا يمكن توزيع أكثر من المخزون الفعلي غير الموزَّع، وكل حركة تُسجَّل باسم صاحبها في "سجل الحركات".
           </p>
 
           {accounts.length === 0 ? (
-            <Card className="p-8"><EmptyState text="لا يوجد حسابات مسجّلة بعد لتوزيع المخزون عليها" /></Card>
+            <Card className="p-8"><EmptyState text="لا يوجد بائعون مسجّلون بعد لتوزيع المخزون عليهم" /></Card>
           ) : (
             <>
               <Card className="p-4 space-y-3">
@@ -3978,10 +4362,19 @@ function StockAllocationPage({ products, users, currentUser, canManage, allocati
                 <>
                   <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
                     <StatCard label="المخزون الفعلي" value={product.stock} color="var(--accent-dark)" icon={Package} />
-                    <StatCard label="بحوزة الحسابات (غير مباع)" value={totalRemaining} color="var(--accent)" icon={Boxes} />
+                    <StatCard label="بحوزة البائعين (غير مباع)" value={totalRemaining} color="var(--accent)" icon={Boxes} />
                     <StatCard label="متاح للتوزيع" value={freePool} color="#8A7B6C" icon={Package} />
                     <StatCard label="بيع من الحصص" value={totalSold} color="#3F7D57" icon={TrendingUp} />
                   </div>
+
+                  {totalRemaining > product.stock && (
+                    <Card className="p-3 flex items-start gap-2 border-[#E8B4B4]">
+                      <AlertTriangle size={16} className="text-[#B23A3A] shrink-0 mt-0.5" />
+                      <p className="text-xs text-[#B23A3A] leading-relaxed">
+                        المحتسب بحوزة البائعين ({totalRemaining}) أكثر من المخزون الفعلي ({product.stock}) بفارق {totalRemaining - product.stock} قطعة — غالباً بسبب هدية أو تالف أو تجربة سُجّلت قبل هذا التحديث. اسحب الفرق بزر (−) من حصة البائع المعني لتتطابق الأرقام.
+                      </p>
+                    </Card>
+                  )}
 
                   <Card className="p-4">
                     <div className="flex items-center justify-between mb-3 gap-2 flex-wrap">
@@ -4073,7 +4466,7 @@ function StockAllocationPage({ products, users, currentUser, canManage, allocati
       {tab === "summary" && (
         <>
           <select className={inputCls + " sm:w-64"} value={summaryFilter} onChange={(e) => setSummaryFilter(e.target.value)}>
-            <option value="all">كل الحسابات</option>
+            <option value="all">كل البائعين</option>
             {accounts.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
           </select>
           <div className="grid md:grid-cols-2 gap-3">
@@ -4087,7 +4480,7 @@ function StockAllocationPage({ products, users, currentUser, canManage, allocati
                   <p className="text-xs text-[var(--muted)]">بحوزته <b className="text-[var(--text)]">{remaining}</b> · باع <b className="text-[var(--text)]">{allocated - remaining}</b></p>
                 </div>
                 {rows.length === 0 ? (
-                  <p className="text-xs text-[var(--muted)]">لا توجد حصص مخصصة لهذا الحساب</p>
+                  <p className="text-xs text-[var(--muted)]">لا توجد حصص مخصصة لهذا البائع</p>
                 ) : (
                   <table className="w-full text-xs">
                     <thead>
@@ -4120,7 +4513,7 @@ function StockAllocationPage({ products, users, currentUser, canManage, allocati
         <>
           <div className="flex flex-col sm:flex-row gap-2">
             <select className={inputCls + " sm:w-56"} value={logAccount} onChange={(e) => setLogAccount(e.target.value)}>
-              <option value="all">كل الحسابات</option>
+              <option value="all">كل البائعين</option>
               {accounts.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
             </select>
             <select className={inputCls + " sm:w-56"} value={logProduct} onChange={(e) => setLogProduct(e.target.value)}>
