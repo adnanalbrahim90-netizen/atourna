@@ -72,6 +72,30 @@ async function storeSet(key, value, shared = true) {
 // exactly like before — this feature is entirely opt-in, product by product.
 const isProductManaged = (allocations, productId) => allocations.some((a) => a.productId === productId);
 
+// Who may distribute stock between accounts: the primary admin always, plus
+// any single account (admin or seller) the primary admin has explicitly
+// given the "warehouse manager" (مسؤول المخزن) responsibility to.
+const canManageAllocations = (user) => !!(user && (user.isPrimaryAdmin || user.canManageStock));
+
+// Builds one entry of the stock-distribution movement log — the detailed,
+// per-name record of every quantity handed to, taken from or moved between
+// accounts, and by whom.
+const makeAllocationLogEntry = ({ byUser, type, productId, productName, sellerId, sellerName, before, after, note }) => ({
+  id: uid(),
+  date: todayISO(),
+  byUserId: byUser?.id || "",
+  byUserName: byUser?.name || "",
+  type, // 'set' | 'adjust' | 'equal' | 'clear' | 'transfer_in' | 'transfer_out'
+  productId,
+  productName,
+  sellerId,
+  sellerName,
+  before,
+  after,
+  delta: after - before,
+  note: note || "",
+});
+
 const getAllocationRecord = (allocations, sellerId, productId) =>
   allocations.find((a) => a.sellerId === sellerId && a.productId === productId) || null;
 
@@ -804,6 +828,7 @@ export default function App() {
   const [activityLog, setActivityLog] = useState([]); // login/logout + business-action audit trail — visible to the primary admin only
   const [sellerGoals, setSellerGoals] = useState({}); // { [userId]: monthlyTargetAmount }
   const [sellerAllocations, setSellerAllocations] = useState([]); // [{id, sellerId, sellerName, productId, productName, allocated, remaining}]
+  const [allocationLog, setAllocationLog] = useState([]); // detailed per-name stock-distribution movement log
   const [stockRequests, setStockRequests] = useState([]); // [{id, productId, productName, requesterId, requesterName, targetSellerId, targetSellerName, qty, status, createdAt, respondedAt, approvedQty}]
   const [personalTheme, setPersonalThemeState] = useState(""); // per-device theme override, empty = use company theme
   const activeTheme = personalTheme || settings.theme || "classic";
@@ -860,6 +885,7 @@ export default function App() {
     const sg = await storeGet("perfume_seller_goals", {});
     const sa = await storeGet("perfume_seller_allocations", []);
     const sr = await storeGet("perfume_stock_requests", []);
+    const al = await storeGet("perfume_allocation_log", []);
 
     // Self-healing migration: some accounts lost their "primary admin" flag
     // (e.g. after restoring a backup taken before this feature existed),
@@ -877,7 +903,7 @@ export default function App() {
       }
     }
 
-    const snapshot = JSON.stringify({ u, p, s, sq, st, an, sl, ex, pt, pd, sg, sa, sr });
+    const snapshot = JSON.stringify({ u, p, s, sq, st, an, sl, ex, pt, pd, sg, sa, sr, al });
     if (snapshot === lastSnapshot.current) return; // nothing new, avoid needless re-render
     lastSnapshot.current = snapshot;
 
@@ -894,6 +920,7 @@ export default function App() {
     setSellerGoals(sg);
     setSellerAllocations(sa);
     setStockRequests(sr);
+    setAllocationLog(al);
     if (isInitial) setLoading(false);
 
     // Automatic rolling daily backup: one single snapshot, overwritten once
@@ -905,7 +932,7 @@ export default function App() {
         const snapshot = {
           date: today,
           savedAt: todayISO(),
-          data: { users: u, products: p, sales: s, seq: sq, settings: st, announcements: an, stockLogs: sl, expenses: ex, partners: pt, profitDistributions: pd },
+          data: { users: u, products: p, sales: s, seq: sq, settings: st, announcements: an, stockLogs: sl, expenses: ex, partners: pt, profitDistributions: pd, sellerGoals: sg, sellerAllocations: sa, stockRequests: sr, allocationLog: al },
         };
         await storeSet("perfume_daily_backup", snapshot);
         setDailyBackup(snapshot);
@@ -954,6 +981,15 @@ export default function App() {
       window.localStorage.removeItem("atourna_session_username");
     }
   }, [users, loading, currentUser]);
+
+  // Keep the logged-in user's record in sync with the shared user list, so a
+  // permission granted or withdrawn by the primary admin (e.g. warehouse
+  // manager) takes effect within seconds, without the person re-logging in.
+  useEffect(() => {
+    if (!currentUser) return;
+    const fresh = users.find((u) => u.id === currentUser.id);
+    if (fresh && JSON.stringify(fresh) !== JSON.stringify(currentUser)) setCurrentUser(fresh);
+  }, [users, currentUser]);
 
   // Surface any announcement the current user hasn't seen yet as a popup.
   // This runs whenever the shared announcements list changes — including
@@ -1171,6 +1207,16 @@ export default function App() {
   const persistSellerGoals = async (next) => { setSellerGoals(next); await storeSet("perfume_seller_goals", next); };
   const persistSellerAllocations = async (next) => { setSellerAllocations(next); await storeSet("perfume_seller_allocations", next); };
   const persistStockRequests = async (next) => { setStockRequests(next); await storeSet("perfume_stock_requests", next); };
+  // Appends to the distribution movement log. Reads storage directly (like
+  // logActivity) so entries written from two devices never overwrite each
+  // other, and caps it at 2000 entries so it never grows unbounded.
+  const appendAllocationLog = async (entries) => {
+    if (!entries || entries.length === 0) return;
+    const current = await storeGet("perfume_allocation_log", []);
+    const next = [...entries, ...current].slice(0, 2000);
+    await storeSet("perfume_allocation_log", next);
+    setAllocationLog(next);
+  };
 
   // A colleague responds to a stock-transfer request sent to them. Approving
   // permanently moves the requested quantity from the responder's own
@@ -1201,6 +1247,23 @@ export default function App() {
     await persistStockRequests(
       stockRequests.map((r) => (r.id === requestId ? { ...r, status: "approved", respondedAt: todayISO(), approvedQty: transferredQty } : r))
     );
+    if (transferredQty > 0) {
+      const beforeOf = (list, sid) => getAllocationRecord(list, sid, req.productId)?.allocated || 0;
+      await appendAllocationLog([
+        makeAllocationLogEntry({
+          byUser: currentUser, type: "transfer_out", productId: req.productId, productName: req.productName,
+          sellerId: req.targetSellerId, sellerName: req.targetSellerName,
+          before: beforeOf(sellerAllocations, req.targetSellerId), after: beforeOf(updatedAllocations, req.targetSellerId),
+          note: `نقل إلى ${req.requesterName} بموافقته`,
+        }),
+        makeAllocationLogEntry({
+          byUser: currentUser, type: "transfer_in", productId: req.productId, productName: req.productName,
+          sellerId: req.requesterId, sellerName: req.requesterName,
+          before: beforeOf(sellerAllocations, req.requesterId), after: beforeOf(updatedAllocations, req.requesterId),
+          note: `استلام من ${req.targetSellerName}`,
+        }),
+      ]);
+    }
     showToast(
       transferredQty >= req.qty
         ? `تمت الموافقة، وانتقلت ${transferredQty} قطعة من ${req.productName} إلى ${req.requesterName}`
@@ -1264,9 +1327,12 @@ export default function App() {
   };
 
   // Full invoice edit (admin only): replaces items/collected and reconciles stock deltas.
-  const editSaleWithStock = async (id, newItems, newCollected, newDiscountType, newDiscountValue) => {
+  const editSaleWithStock = async (id, newItems, newCollected, newDiscountType, newDiscountValue, reason = "") => {
     const oldSale = sales.find((s) => s.id === id);
     if (!oldSale) return;
+    // Admins may edit any invoice; a seller may only correct their own.
+    const isOwner = oldSale.sellerId === currentUser?.id;
+    if (currentUser?.role !== "admin" && !isOwner) return;
 
     const subtotal = newItems.reduce((a, l) => a + l.total, 0);
     const discountType = newDiscountType ?? oldSale.discountType ?? "amount";
@@ -1315,13 +1381,26 @@ export default function App() {
     }
     await persistSellerAllocations(updatedAllocations);
 
-    await updateSale(id, { items: newItems, subtotal, discountType, discountValue, discountAmount, taxAmount, total, collected, remaining, allocationSources });
-    logActivity(currentUser, "تعديل فاتورة", `${oldSale.invoiceNo} - الإجمالي الجديد ${fmt(total)} K.D`);
+    // Every edit is kept on the invoice itself (who, when, why, totals
+    // before/after) so a correction by a seller stays fully traceable.
+    const editHistory = [
+      ...(oldSale.editHistory || []),
+      { date: todayISO(), byUserId: currentUser.id, byUserName: currentUser.name, reason, oldTotal: oldSale.total, newTotal: total },
+    ];
+    await updateSale(id, { items: newItems, subtotal, discountType, discountValue, discountAmount, taxAmount, total, collected, remaining, allocationSources, editHistory });
+    logActivity(
+      currentUser,
+      currentUser.role === "admin" ? "تعديل فاتورة" : "تصحيح فاتورة من البائع",
+      `${oldSale.invoiceNo} - من ${fmt(oldSale.total)} إلى ${fmt(total)} K.D${reason ? ` - السبب: ${reason}` : ""}`
+    );
   };
 
   const isAdmin = currentUser?.role === "admin";
 
-  const visibleNav = NAV_ITEMS.filter((n) => n.roles.includes(currentUser?.role) && (!n.primaryOnly || currentUser?.isPrimaryAdmin));
+  const visibleNav = NAV_ITEMS
+    .filter((n) => n.roles.includes(currentUser?.role) && (!n.primaryOnly || currentUser?.isPrimaryAdmin))
+    // Only the warehouse manager distributes stock; everyone else just sees their own share.
+    .map((n) => (n.key === "allocations" && !canManageAllocations(currentUser) ? { ...n, label: "مخزوني المخصص" } : n));
 
   const doPrint = () => {
     setTimeout(() => window.print(), 50);
@@ -1397,15 +1476,17 @@ export default function App() {
         <PrintArea payload={printPayload} settings={settings} onClose={() => setPrintPayload(null)} />
       )}
 
-      {editingSale && (
+      {editingSale && (isAdmin || editingSale.sellerId === currentUser?.id) && (
         <EditSaleModal
           sale={editingSale}
           products={products}
+          sellerAllocations={sellerAllocations}
+          isOwnerEdit={!isAdmin}
           onClose={() => setEditingSale(null)}
-          onSave={async (newItems, newCollected, newDiscountType, newDiscountValue) => {
-            await editSaleWithStock(editingSale.id, newItems, newCollected, newDiscountType, newDiscountValue);
+          onSave={async (newItems, newCollected, newDiscountType, newDiscountValue, reason) => {
+            await editSaleWithStock(editingSale.id, newItems, newCollected, newDiscountType, newDiscountValue, reason);
             setEditingSale(null);
-            showToast("تم تعديل الفاتورة بنجاح");
+            showToast(isAdmin ? "تم تعديل الفاتورة بنجاح" : "تم تصحيح فاتورتك بنجاح");
           }}
         />
       )}
@@ -1455,7 +1536,7 @@ export default function App() {
           </div>
           <div className="flex items-center gap-3">
             <div className="text-left hidden sm:block">
-              <p className="text-xs text-[var(--muted)] leading-tight">{isAdmin ? "مدير النظام" : "بائع"}</p>
+              <p className="text-xs text-[var(--muted)] leading-tight">{isAdmin ? "مدير النظام" : "بائع"}{currentUser.canManageStock && !currentUser.isPrimaryAdmin ? " · مسؤول المخزن" : ""}</p>
               <p className="text-sm font-semibold leading-tight">{currentUser.name}</p>
             </div>
             <button
@@ -1692,10 +1773,15 @@ export default function App() {
               products={products}
               users={users}
               currentUser={currentUser}
-              isAdmin={isAdmin}
+              canManage={canManageAllocations(currentUser)}
               allocations={sellerAllocations}
-              onSave={async (next, note) => {
+              allocationLog={allocationLog}
+              onSave={async (next, note, logEntries) => {
+                // Defense in depth: the page only shows management controls
+                // to the warehouse manager, but never trust the UI alone.
+                if (!canManageAllocations(currentUser)) return;
                 await persistSellerAllocations(next);
+                await appendAllocationLog(logEntries);
                 showToast("تم تحديث توزيع المخزون");
                 logActivity(currentUser, "تعديل توزيع المخزون", note || "");
               }}
@@ -1770,7 +1856,18 @@ export default function App() {
             />
           )}
           {view === "users" && isAdmin && (
-            <UsersAdmin users={users} onSave={async (next) => { await persistUsers(next); showToast("تم حفظ بيانات المستخدمين بنجاح"); }} onConfirm={askConfirm} currentUser={currentUser} />
+            <UsersAdmin
+              users={users}
+              onSave={async (next) => { await persistUsers(next); showToast("تم حفظ بيانات المستخدمين بنجاح"); }}
+              onConfirm={askConfirm}
+              currentUser={currentUser}
+              onToggleStockManager={async (target, grant) => {
+                if (!currentUser?.isPrimaryAdmin || target.isPrimaryAdmin) return;
+                await persistUsers(users.map((u) => (u.id === target.id ? { ...u, canManageStock: grant } : u)));
+                showToast(grant ? `أصبح ${target.name} مسؤول المخزن` : `تم سحب صلاحية مسؤول المخزن من ${target.name}`);
+                logActivity(currentUser, grant ? "منح صلاحية مسؤول المخزن" : "سحب صلاحية مسؤول المخزن", target.name);
+              }}
+            />
           )}
           {view === "activitylog" && currentUser?.isPrimaryAdmin && (
             <ActivityLogPage log={activityLog} users={users} />
@@ -1780,14 +1877,14 @@ export default function App() {
           )}
           {view === "backup" && isAdmin && (
             <BackupPage
-              data={{ users, products, sales, seq, settings, announcements, stockLogs, expenses, partners, profitDistributions, sellerGoals }}
+              data={{ users, products, sales, seq, settings, announcements, stockLogs, expenses, partners, profitDistributions, sellerGoals, sellerAllocations, stockRequests, allocationLog }}
               dailyBackup={dailyBackup}
               onRefreshDailyBackup={async () => {
                 const today = new Date().toISOString().slice(0, 10);
                 const snapshot = {
                   date: today,
                   savedAt: todayISO(),
-                  data: { users, products, sales, seq, settings, announcements, stockLogs, expenses, partners, profitDistributions, sellerGoals },
+                  data: { users, products, sales, seq, settings, announcements, stockLogs, expenses, partners, profitDistributions, sellerGoals, sellerAllocations, stockRequests, allocationLog },
                 };
                 await storeSet("perfume_daily_backup", snapshot);
                 setDailyBackup(snapshot);
@@ -1806,6 +1903,9 @@ export default function App() {
                   await persistPartners(next.partners || partners);
                   await persistProfitDistributions(next.profitDistributions || profitDistributions);
                   await persistSellerGoals(next.sellerGoals || sellerGoals);
+                  await persistSellerAllocations(next.sellerAllocations || sellerAllocations);
+                  await persistStockRequests(next.stockRequests || stockRequests);
+                  if (next.allocationLog) { await storeSet("perfume_allocation_log", next.allocationLog); setAllocationLog(next.allocationLog); }
                 } else {
                   const mergeById = (a, b) => {
                     const map = new Map(a.map((x) => [x.id, x]));
@@ -1823,6 +1923,11 @@ export default function App() {
                   await persistPartners(mergeById(partners, next.partners));
                   await persistProfitDistributions(mergeById(profitDistributions, next.profitDistributions));
                   await persistSellerGoals({ ...sellerGoals, ...(next.sellerGoals || {}) });
+                  await persistSellerAllocations(mergeById(sellerAllocations, next.sellerAllocations));
+                  await persistStockRequests(mergeById(stockRequests, next.stockRequests));
+                  const mergedLog = mergeById(allocationLog, next.allocationLog).sort((a, b) => new Date(b.date) - new Date(a.date));
+                  await storeSet("perfume_allocation_log", mergedLog);
+                  setAllocationLog(mergedLog);
                 }
                 showToast("تمت استعادة البيانات بنجاح");
               }}
@@ -2808,7 +2913,7 @@ function SalesRecords({ sales, users, currentUser, isAdmin, settings, onDelete, 
               <Card key={s.id} className="p-4">
                 <div className="flex justify-between items-start mb-2">
                   <div>
-                    <p className="font-bold">{s.invoiceNo}</p>
+                    <p className="font-bold">{s.invoiceNo}{(s.editHistory || []).length > 0 && <span title={`عُدّلت ${s.editHistory.length} مرة — آخر تعديل: ${s.editHistory[s.editHistory.length - 1].byUserName}`} className="mr-1.5 text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-[#FFF6E5] text-[#C97B3D] align-middle">مُعدّلة</span>}</p>
                     <p className="text-xs text-[var(--muted)]">{s.sellerName} · {dateLabel(s.date)} {timeLabel(s.date)}</p>
                   </div>
                   <p className="font-extrabold text-[var(--accent)]">{fmt(s.total)} K.D</p>
@@ -2823,7 +2928,7 @@ function SalesRecords({ sales, users, currentUser, isAdmin, settings, onDelete, 
                     <Printer size={14} /> طباعة الفاتورة
                   </Btn>
                   {s.remaining > 0 && (
-                    <Btn variant="dark" className="flex-1 py-2 text-xs" onClick={() => { setPayingId(s.id); setPayAmount(""); }}>
+                    <Btn variant="dark" className="flex-1 py-2 text-xs" onClick={() => { setPayingId(s.id); }}>
                       <Wallet size={14} /> تسجيل تحصيل
                     </Btn>
                   )}
@@ -2836,11 +2941,11 @@ function SalesRecords({ sales, users, currentUser, isAdmin, settings, onDelete, 
                       <span className="absolute -top-1 -left-1 bg-[#B23A3A] text-white text-[9px] rounded-full w-4 h-4 flex items-center justify-center">{s.comments.length}</span>
                     )}
                   </button>
+                  {(isAdmin || s.sellerId === currentUser.id) && (
+                    <button onClick={() => onEditSale(s)} title={isAdmin ? "تعديل" : "تصحيح بيانات فاتورتك"} className="p-2.5 rounded-xl bg-[var(--surface-3)] text-[var(--accent-dark)]"><Pencil size={16} /></button>
+                  )}
                   {isAdmin && (
-                    <>
-                      <button onClick={() => onEditSale(s)} className="p-2.5 rounded-xl bg-[var(--surface-3)] text-[var(--accent-dark)]"><Pencil size={16} /></button>
-                      <button onClick={() => onConfirm(`هل تريد حذف الفاتورة ${s.invoiceNo}؟ سيتم إرجاع كمية المنتجات إلى المخزون تلقائياً. لا يمكن التراجع عن هذا الإجراء.`, () => onDelete(s.id))} className="p-2.5 rounded-xl bg-[#FBEAEA] text-[#B23A3A]"><Trash2 size={16} /></button>
-                    </>
+                    <button onClick={() => onConfirm(`هل تريد حذف الفاتورة ${s.invoiceNo}؟ سيتم إرجاع كمية المنتجات إلى المخزون تلقائياً. لا يمكن التراجع عن هذا الإجراء.`, () => onDelete(s.id))} className="p-2.5 rounded-xl bg-[#FBEAEA] text-[#B23A3A]"><Trash2 size={16} /></button>
                   )}
                 </div>
                 {payingId === s.id && (
@@ -2881,7 +2986,7 @@ function SalesRecords({ sales, users, currentUser, isAdmin, settings, onDelete, 
                 {list.map((s) => (
                   <React.Fragment key={s.id}>
                     <tr className="border-b border-[var(--border)] last:border-0 hover:bg-[var(--surface-2)]">
-                      <td className="px-4 py-3 font-bold">{s.invoiceNo}</td>
+                      <td className="px-4 py-3 font-bold">{s.invoiceNo}{(s.editHistory || []).length > 0 && <span title={`عُدّلت ${s.editHistory.length} مرة — آخر تعديل: ${s.editHistory[s.editHistory.length - 1].byUserName}`} className="mr-1.5 text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-[#FFF6E5] text-[#C97B3D] align-middle">مُعدّلة</span>}</td>
                       <td className="px-4 py-3">{s.sellerName}</td>
                       <td className="px-4 py-3 text-[var(--muted)]">{dateLabel(s.date)}</td>
                       <td className="px-4 py-3 text-[var(--muted)] max-w-[220px] truncate">{s.items.map((i) => i.name).join("، ")}</td>
@@ -2892,7 +2997,7 @@ function SalesRecords({ sales, users, currentUser, isAdmin, settings, onDelete, 
                         <div className="flex items-center gap-2">
                           <button onClick={() => onPrintInvoice(s)} className="p-1.5 rounded-lg text-[var(--accent-dark)] hover:bg-[var(--surface-3)]" title="طباعة"><Printer size={16} /></button>
                           {s.remaining > 0 && (
-                            <button onClick={() => { setPayingId(payingId === s.id ? null : s.id); setPayAmount(""); }} className="p-1.5 rounded-lg text-[#3F7D57] hover:bg-[var(--surface-3)]" title="تسجيل تحصيل"><Wallet size={16} /></button>
+                            <button onClick={() => { setPayingId(payingId === s.id ? null : s.id); }} className="p-1.5 rounded-lg text-[#3F7D57] hover:bg-[var(--surface-3)]" title="تسجيل تحصيل"><Wallet size={16} /></button>
                           )}
                           <button onClick={() => setCommentingId(commentingId === s.id ? null : s.id)} className="p-1.5 rounded-lg text-[var(--accent-dark)] hover:bg-[var(--surface-3)] relative" title="ملاحظات">
                             <MessageSquare size={16} />
@@ -2900,11 +3005,11 @@ function SalesRecords({ sales, users, currentUser, isAdmin, settings, onDelete, 
                               <span className="absolute -top-1 -left-1 bg-[#B23A3A] text-white text-[9px] rounded-full w-4 h-4 flex items-center justify-center">{s.comments.length}</span>
                             )}
                           </button>
+                          {(isAdmin || s.sellerId === currentUser.id) && (
+                            <button onClick={() => onEditSale(s)} className="p-1.5 rounded-lg text-[var(--accent-dark)] hover:bg-[var(--surface-3)]" title={isAdmin ? "تعديل" : "تصحيح بيانات فاتورتك"}><Pencil size={16} /></button>
+                          )}
                           {isAdmin && (
-                            <>
-                              <button onClick={() => onEditSale(s)} className="p-1.5 rounded-lg text-[var(--accent-dark)] hover:bg-[var(--surface-3)]" title="تعديل"><Pencil size={16} /></button>
-                              <button onClick={() => onConfirm(`هل تريد حذف الفاتورة ${s.invoiceNo}؟ سيتم إرجاع كمية المنتجات إلى المخزون تلقائياً. لا يمكن التراجع عن هذا الإجراء.`, () => onDelete(s.id))} className="p-1.5 rounded-lg text-[#B23A3A] hover:bg-[#FBEAEA]" title="حذف"><Trash2 size={16} /></button>
-                            </>
+                            <button onClick={() => onConfirm(`هل تريد حذف الفاتورة ${s.invoiceNo}؟ سيتم إرجاع كمية المنتجات إلى المخزون تلقائياً. لا يمكن التراجع عن هذا الإجراء.`, () => onDelete(s.id))} className="p-1.5 rounded-lg text-[#B23A3A] hover:bg-[#FBEAEA]" title="حذف"><Trash2 size={16} /></button>
                           )}
                         </div>
                       </td>
@@ -3396,7 +3501,7 @@ function Inventory({ products, isAdmin, onSave, onPrintLabels, stockLogs, onLogA
 
 /* ---------------------------------- Users Admin ---------------------------------- */
 
-function UsersAdmin({ users, onSave, onConfirm, currentUser }) {
+function UsersAdmin({ users, onSave, onConfirm, currentUser, onToggleStockManager }) {
   const [form, setForm] = useState({ username: "", password: "", name: "", role: "seller" });
   const [editingId, setEditingId] = useState(null);
   const [editForm, setEditForm] = useState({ username: "", password: "", name: "", role: "seller", securityQuestion: "", securityAnswer: "" });
@@ -3442,6 +3547,18 @@ function UsersAdmin({ users, onSave, onConfirm, currentUser }) {
   return (
     <div className="space-y-5">
       <h2 className="text-xl font-bold">إدارة المستخدمين والصلاحيات</h2>
+
+      {currentUser.isPrimaryAdmin && (
+        <Card className="p-4 flex items-start gap-3">
+          <div className="w-9 h-9 rounded-full bg-[#FFF6E5] flex items-center justify-center shrink-0">
+            <Boxes size={18} className="text-[#C97B3D]" />
+          </div>
+          <div className="text-xs text-[var(--muted)] leading-relaxed">
+            <p className="font-bold text-sm text-[var(--text)] mb-0.5">صلاحية مسؤول المخزن</p>
+            صاحب هذه الصلاحية — مديراً كان أو بائعاً — يوزّع المنتجات بالعدد على جميع الحسابات، ويزيد أو ينقص حصة كل حساب، ويطّلع على سجل الحركات المفصّل بالاسم. بقية الحسابات ترى حصتها فقط. يمكنك منحها أو سحبها من زر "تعيين مسؤول مخزن" بجانب أي حساب.
+          </div>
+        </Card>
+      )}
 
       <Card className="p-4">
         <h3 className="font-bold mb-3">إضافة مستخدم جديد</h3>
@@ -3500,9 +3617,33 @@ function UsersAdmin({ users, onSave, onConfirm, currentUser }) {
                       </span>
                     )}
                   </p>
-                  <p className="text-xs text-[var(--muted)]">{u.role === "admin" ? "مدير" : "بائع"}</p>
+                  <p className="text-xs text-[var(--muted)] flex items-center gap-1.5 flex-wrap">
+                    {u.role === "admin" ? "مدير" : "بائع"}
+                    {(u.canManageStock || u.isPrimaryAdmin) && (
+                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-[#FFF6E5] text-[#C97B3D] inline-flex items-center gap-1">
+                        <Boxes size={10} /> مسؤول المخزن
+                      </span>
+                    )}
+                  </p>
                 </div>
                 <div className="flex items-center gap-2">
+                  {currentUser.isPrimaryAdmin && !u.isPrimaryAdmin && (
+                    <button
+                      onClick={() =>
+                        u.canManageStock
+                          ? onConfirm(`هل تريد سحب صلاحية "مسؤول المخزن" من ${u.name}؟ لن يتمكن بعدها من توزيع المخزون على الحسابات.`, () => onToggleStockManager(u, false))
+                          : onToggleStockManager(u, true)
+                      }
+                      title={u.canManageStock ? "سحب صلاحية مسؤول المخزن" : "منح صلاحية مسؤول المخزن"}
+                      className={`text-[11px] font-semibold px-2.5 py-1.5 rounded-lg inline-flex items-center gap-1 transition ${
+                        u.canManageStock
+                          ? "bg-[#C97B3D] text-white hover:brightness-95"
+                          : "bg-[var(--surface-3)] text-[var(--accent-dark)] hover:bg-[var(--border)]"
+                      }`}
+                    >
+                      <Boxes size={13} /> {u.canManageStock ? "مسؤول المخزن ✓" : "تعيين مسؤول مخزن"}
+                    </button>
+                  )}
                   {(!u.isPrimaryAdmin || currentUser.id === u.id) && (
                     <button onClick={() => startEdit(u)} className="p-2 rounded-lg text-[var(--accent-dark)] hover:bg-[var(--surface-3)]"><Pencil size={16} /></button>
                   )}
@@ -3548,22 +3689,61 @@ function AnnouncementPopup({ announcement, onClose }) {
   );
 }
 
+const ALLOC_LOG_TYPES = {
+  set: { label: "تعيين كمية", cls: "bg-[var(--surface-3)] text-[var(--accent-dark)]" },
+  adjust_in: { label: "إضافة", cls: "bg-[#EAF6EF] text-[#3F7D57]" },
+  adjust_out: { label: "سحب", cls: "bg-[#FBEAEA] text-[#B23A3A]" },
+  equal: { label: "توزيع بالتساوي", cls: "bg-[var(--surface-3)] text-[var(--accent-dark)]" },
+  clear: { label: "إلغاء التوزيع", cls: "bg-[#FBEAEA] text-[#B23A3A]" },
+  transfer_in: { label: "استلام من زميل", cls: "bg-[#FFF6E5] text-[#C97B3D]" },
+  transfer_out: { label: "تسليم لزميل", cls: "bg-[#FFF6E5] text-[#C97B3D]" },
+};
+const allocLogType = (e) => (e.type === "adjust" ? (e.delta >= 0 ? ALLOC_LOG_TYPES.adjust_in : ALLOC_LOG_TYPES.adjust_out) : ALLOC_LOG_TYPES[e.type] || ALLOC_LOG_TYPES.set);
+
+// One row of the stock-distribution movement log.
+function AllocationLogRow({ e, showSeller = true }) {
+  const t = allocLogType(e);
+  return (
+    <div className="flex items-start justify-between gap-3 bg-[var(--surface-2)] rounded-xl px-3 py-2.5">
+      <div className="min-w-0">
+        <p className="text-sm font-semibold flex items-center gap-1.5 flex-wrap">
+          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${t.cls}`}>{t.label}</span>
+          {e.productName}
+          {showSeller && <span className="text-[var(--muted)] font-normal">— {e.sellerName}</span>}
+        </p>
+        <p className="text-[11px] text-[var(--muted)] mt-0.5">
+          الحصة: {e.before} ← {e.after} · بواسطة {e.byUserName} · {dateLabel(e.date)} {timeLabel(e.date)}
+          {e.note ? ` · ${e.note}` : ""}
+        </p>
+      </div>
+      <span dir="ltr" className={`text-sm font-extrabold shrink-0 ${e.delta > 0 ? "text-[#3F7D57]" : e.delta < 0 ? "text-[#B23A3A]" : "text-[var(--muted)]"}`}>
+        {e.delta > 0 ? "+" : ""}{e.delta}
+      </span>
+    </div>
+  );
+}
+
 /* ------------------------------ Seller Stock Allocation ------------------------------ */
-// Lets the admin split a product's stock into personal shares per seller.
-// A seller sells only from their own share; once it runs dry, they send a
-// stock-transfer request to a colleague who still has some left (from the
-// "New Sale" screen), and nothing moves until that colleague approves it.
-// Products nobody has assigned a share for stay completely unrestricted,
-// exactly as before — this page is only where that opt-in choice is made.
-function StockAllocationPage({ products, users, currentUser, isAdmin, allocations, onSave, onConfirm }) {
-  // Managers sell too, so every account — admin or seller — can receive a
-  // personal stock allocation, not sellers only.
-  const sellersOnly = users;
+// The warehouse manager's workspace (مسؤول المخزن — the primary admin, or
+// whoever they've delegated that responsibility to): hand out each
+// product's stock to accounts by quantity, top up / take back, and keep a
+// detailed per-name record of every movement. Everyone else sees only their
+// own shares here. A seller sells only from their own share; once it runs
+// dry, they request more from a colleague, and nothing moves until that
+// colleague approves. Products nobody has assigned a share for stay
+// completely unrestricted, exactly as before.
+function StockAllocationPage({ products, users, currentUser, canManage, allocations, allocationLog = [], onSave, onConfirm }) {
+  // Managers sell too, so every account — admin or seller — can hold a share.
+  const accounts = users;
   const managedProductIds = new Set(allocations.map((a) => a.productId));
+  const [tab, setTab] = useState("distribute"); // distribute | summary | log
   const [productId, setProductId] = useState("");
   const [draft, setDraft] = useState({});
   const [deltaDraft, setDeltaDraft] = useState({});
   const [search, setSearch] = useState("");
+  const [summaryFilter, setSummaryFilter] = useState("all");
+  const [logAccount, setLogAccount] = useState("all");
+  const [logProduct, setLogProduct] = useState("all");
 
   const product = products.find((p) => p.id === productId) || null;
 
@@ -3575,7 +3755,14 @@ function StockAllocationPage({ products, users, currentUser, isAdmin, allocation
   const totalAllocated = productAllocations.reduce((s, a) => s + a.allocated, 0);
   const totalRemaining = productAllocations.reduce((s, a) => s + a.remaining, 0);
   const totalSold = totalAllocated - totalRemaining;
-  const unassigned = product ? Math.max(0, product.stock - totalAllocated) : 0;
+  // Physical stock not currently sitting in anyone's unsold share — the
+  // pool the warehouse manager can still hand out.
+  const freePool = product ? Math.max(0, product.stock - totalRemaining) : 0;
+
+  const entry = (seller, type, before, after, note) =>
+    makeAllocationLogEntry({ byUser: currentUser, type, productId, productName: product.name, sellerId: seller.id, sellerName: seller.name, before, after, note });
+
+  const overPoolMsg = (need) => `لا يوجد مخزون حر كافٍ: المطلوب ${need} والمتاح غير الموزَّع ${freePool} فقط. زِد كمية المنتج في صفحة المخزون أولاً، أو اسحب من حصة حساب آخر.`;
 
   const saveSeller = (seller) => {
     if (!product) return;
@@ -3583,68 +3770,78 @@ function StockAllocationPage({ products, users, currentUser, isAdmin, allocation
     if (raw === undefined || raw === "") return;
     const newAllocated = Math.max(0, Math.floor(Number(raw) || 0));
     const existing = recordFor(seller.id);
+    const before = existing ? existing.allocated : 0;
+    const delta = newAllocated - before;
+    if (delta === 0) return;
+    if (delta > freePool) { alert(overPoolMsg(delta)); return; }
     let next;
     if (existing) {
-      const delta = newAllocated - existing.allocated;
       const nextRemaining = Math.max(0, Math.min(newAllocated, existing.remaining + delta));
       next = allocations.map((a) => (a.id === existing.id ? { ...a, allocated: newAllocated, remaining: nextRemaining, sellerName: seller.name, productName: product.name } : a));
     } else {
-      if (newAllocated <= 0) return;
       next = [...allocations, { id: uid(), sellerId: seller.id, sellerName: seller.name, productId, productName: product.name, allocated: newAllocated, remaining: newAllocated }];
     }
-    onSave(next, `${product.name} ← ${seller.name}: ${newAllocated} قطعة`);
+    onSave(next, `${product.name} ← ${seller.name}: ${newAllocated} قطعة`, [entry(seller, "set", before, newAllocated)]);
     setDraft((d) => ({ ...d, [seller.id]: undefined }));
   };
 
-  // Quick top-up / take-back: bumps this seller's assigned quantity by a
-  // small delta (both the total allocated and what's currently available to
-  // sell) without having to retype the full new total — the everyday way to
-  // hand a seller more stock mid-day, or pull unused stock back.
+  // Quick top-up / take-back by a small step, without retyping the total.
   const adjustSeller = (seller, delta) => {
     if (!product || !delta) return;
     const existing = recordFor(seller.id);
+    if (delta > 0 && delta > freePool) { alert(overPoolMsg(delta)); return; }
     if (!existing) {
-      if (delta <= 0) return; // nothing to take back from an empty allocation
+      if (delta <= 0) return; // nothing to take back from an empty share
       onSave(
         [...allocations, { id: uid(), sellerId: seller.id, sellerName: seller.name, productId, productName: product.name, allocated: delta, remaining: delta }],
-        `${product.name} ← ${seller.name}: +${delta} قطعة`
+        `${product.name} ← ${seller.name}: +${delta} قطعة`,
+        [entry(seller, "adjust", 0, delta)]
       );
       return;
     }
-    const newAllocated = Math.max(0, existing.allocated + delta);
-    const newRemaining = Math.max(0, Math.min(newAllocated, existing.remaining + delta));
+    // Only unsold pieces can be taken back.
+    const take = delta < 0 ? -Math.min(existing.remaining, -delta) : delta;
+    if (take === 0) return;
+    const newAllocated = Math.max(0, existing.allocated + take);
+    const newRemaining = Math.max(0, Math.min(newAllocated, existing.remaining + take));
     const next = allocations.map((a) => (a.id === existing.id ? { ...a, allocated: newAllocated, remaining: newRemaining } : a));
-    onSave(next, `${product.name} ← ${seller.name}: ${delta > 0 ? "+" : ""}${delta} قطعة`);
+    onSave(next, `${product.name} ← ${seller.name}: ${take > 0 ? "+" : ""}${take} قطعة`, [entry(seller, "adjust", existing.allocated, newAllocated)]);
   };
 
   const equalDistribute = () => {
-    if (!product || sellersOnly.length === 0) return;
+    if (!product || accounts.length === 0) return;
     onConfirm(
-      `سيتم توزيع كامل كمية "${product.name}" (${product.stock} قطعة) بالتساوي على ${sellersOnly.length} حساب (بائعين ومديرين)، ما يستبدل أي توزيع سابق لهذا المنتج. هل تريد المتابعة؟`,
+      `سيتم توزيع كامل كمية "${product.name}" (${product.stock} قطعة) بالتساوي على ${accounts.length} حساب، ما يستبدل أي توزيع سابق لهذا المنتج. هل تريد المتابعة؟`,
       () => {
-        const base = Math.floor(product.stock / sellersOnly.length);
-        let remainder = product.stock - base * sellersOnly.length;
+        const base = Math.floor(product.stock / accounts.length);
+        let remainder = product.stock - base * accounts.length;
         const others = allocations.filter((a) => a.productId !== productId);
-        const fresh = sellersOnly.map((s) => {
+        const logEntries = [];
+        const fresh = accounts.map((s) => {
           const qty = base + (remainder-- > 0 ? 1 : 0);
+          logEntries.push(entry(s, "equal", recordFor(s.id)?.allocated || 0, qty));
           return { id: uid(), sellerId: s.id, sellerName: s.name, productId, productName: product.name, allocated: qty, remaining: qty };
         });
-        onSave([...others, ...fresh], `توزيع بالتساوي: ${product.name}`);
+        onSave([...others, ...fresh], `توزيع بالتساوي: ${product.name}`, logEntries);
       }
     );
   };
 
   const clearProduct = () => {
     if (!product) return;
-    onConfirm(`سيتم إلغاء توزيع "${product.name}" على البائعين بالكامل (لن يتأثر إجمالي المخزون، ويعود البيع منه حراً للجميع). هل تريد المتابعة؟`, () => {
-      onSave(allocations.filter((a) => a.productId !== productId), `إلغاء توزيع: ${product.name}`);
+    onConfirm(`سيتم إلغاء توزيع "${product.name}" على الحسابات بالكامل (لن يتأثر إجمالي المخزون، ويعود البيع منه حراً للجميع). هل تريد المتابعة؟`, () => {
+      const logEntries = productAllocations.map((a) =>
+        entry({ id: a.sellerId, name: a.sellerName }, "clear", a.allocated, 0)
+      );
+      onSave(allocations.filter((a) => a.productId !== productId), `إلغاء توزيع: ${product.name}`, logEntries);
     });
   };
 
   const filteredProducts = products.filter((p) => p.name.toLowerCase().includes(search.trim().toLowerCase()));
+  const myLog = allocationLog.filter((e) => e.sellerId === currentUser.id).slice(0, 30);
 
-  /* ---------------- Seller: read-only view of their own shares ---------------- */
-  if (!isAdmin) {
+  /* ---------------- Everyone else: read-only view of their own shares ---------------- */
+  if (!canManage) {
     const mine = allocations
       .filter((a) => a.sellerId === currentUser.id)
       .sort((a, b) => a.remaining - b.remaining);
@@ -3652,7 +3849,7 @@ function StockAllocationPage({ products, users, currentUser, isAdmin, allocation
       <div className="space-y-5">
         <h2 className="text-xl font-bold flex items-center gap-2"><Boxes size={22} /> مخزوني المخصص</h2>
         <p className="text-sm text-[var(--muted)]">
-          هذه هي الكميات التي خصصها لك المدير من كل منتج. إذا نفدت حصتك من منتج ما، يمكنك إرسال طلب لأحد زملائك من شاشة "تسجيل عملية بيع" — ولا تنتقل الكمية إليك إلا بعد موافقته.
+          هذه هي الكميات التي خصصها لك مسؤول المخزن من كل منتج. إذا نفدت حصتك من منتج ما، يمكنك إرسال طلب لأحد زملائك من شاشة "تسجيل عملية بيع" — ولا تنتقل الكمية إليك إلا بعد موافقته.
         </p>
         {mine.length === 0 ? (
           <Card className="p-8"><EmptyState text="لم يتم تخصيص أي منتج لك بعد — بإمكانك البيع من المخزون العام بحرية" /></Card>
@@ -3679,142 +3876,264 @@ function StockAllocationPage({ products, users, currentUser, isAdmin, allocation
             })}
           </div>
         )}
+        {myLog.length > 0 && (
+          <Card className="p-4">
+            <h3 className="font-bold mb-3 flex items-center gap-2"><History size={16} /> حركات حصتي</h3>
+            <div className="space-y-2">
+              {myLog.map((e) => <AllocationLogRow key={e.id} e={e} showSeller={false} />)}
+            </div>
+          </Card>
+        )}
       </div>
     );
   }
 
-  /* ---------------- Admin: assign & manage per-seller shares ---------------- */
+  /* ---------------- Summary data (per account) ---------------- */
+  const summaryAccounts = accounts
+    .filter((u) => summaryFilter === "all" || u.id === summaryFilter)
+    .map((u) => {
+      const rows = allocations.filter((a) => a.sellerId === u.id).sort((a, b) => a.productName.localeCompare(b.productName, "ar"));
+      return {
+        user: u,
+        rows,
+        allocated: rows.reduce((s, a) => s + a.allocated, 0),
+        remaining: rows.reduce((s, a) => s + a.remaining, 0),
+      };
+    });
+
+  let logList = allocationLog;
+  if (logAccount !== "all") logList = logList.filter((e) => e.sellerId === logAccount);
+  if (logProduct !== "all") logList = logList.filter((e) => e.productId === logProduct);
+  const loggedProducts = Array.from(new Map(allocationLog.map((e) => [e.productId, e.productName])).entries());
+
+  const TABS = [
+    ["distribute", "التوزيع", Boxes],
+    ["summary", "ملخص الحسابات", Users2],
+    ["log", "سجل الحركات", History],
+  ];
+
+  /* ---------------- Warehouse manager: assign & manage per-account shares ---------------- */
   return (
     <div className="space-y-5">
-      <h2 className="text-xl font-bold flex items-center gap-2"><Boxes size={22} /> توزيع المخزون على البائعين</h2>
-      <p className="text-sm text-[var(--muted)]">
-        اختر منتجاً وخصّص لكل حساب — بائعاً كان أو مديراً — كمية من مخزونه الشخصي، وزِد أو أنقِص منها في أي وقت. عند نفاد حصة أحدهم، يرسل طلباً لزميل لديه رصيد متبقٍ من نفس المنتج، ولا تنتقل الكمية إلا بعد موافقته.
-      </p>
+      <div className="flex items-center justify-between gap-2 flex-wrap">
+        <h2 className="text-xl font-bold flex items-center gap-2"><Boxes size={22} /> توزيع المخزون على الحسابات</h2>
+        <span className="text-[11px] font-bold px-2.5 py-1 rounded-full bg-[#FFF6E5] text-[#C97B3D] inline-flex items-center gap-1">
+          <ShieldCheck size={12} /> {currentUser.isPrimaryAdmin ? "الحساب الرئيسي" : "مسؤول المخزن"}
+        </span>
+      </div>
 
-      {sellersOnly.length === 0 ? (
-        <Card className="p-8"><EmptyState text="لا يوجد حسابات مسجّلة بعد لتوزيع المخزون عليها" /></Card>
-      ) : (
+      <div className="flex gap-1 bg-[var(--surface-2)] rounded-xl p-1 w-fit max-w-full overflow-x-auto">
+        {TABS.map(([key, label, Icon]) => (
+          <button
+            key={key}
+            onClick={() => setTab(key)}
+            className={`px-3 py-1.5 rounded-lg text-xs font-semibold inline-flex items-center gap-1.5 whitespace-nowrap transition ${
+              tab === key ? "bg-[var(--accent)] text-white shadow-sm" : "text-[var(--muted)] hover:text-[var(--text)]"
+            }`}
+          >
+            <Icon size={14} /> {label}
+          </button>
+        ))}
+      </div>
+
+      {tab === "distribute" && (
         <>
-          <Card className="p-4 space-y-3">
-            <div className="relative">
-              <Search size={15} className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--muted)]" />
-              <input className={inputCls + " pr-9"} placeholder="بحث عن منتج..." value={search} onChange={(e) => setSearch(e.target.value)} />
-            </div>
-            <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-2 max-h-64 overflow-y-auto">
-              {filteredProducts.map((p) => {
-                const isManaged = managedProductIds.has(p.id);
-                const active = p.id === productId;
-                return (
-                  <button
-                    key={p.id}
-                    onClick={() => setProductId(p.id)}
-                    className={`text-right px-3 py-2 rounded-xl border transition text-sm ${
-                      active ? "border-[var(--accent)] bg-[var(--surface-3)] font-bold" : "border-[var(--border)] hover:border-[var(--accent)]"
-                    }`}
-                  >
-                    <div className="flex items-center justify-between gap-2">
-                      <span className="truncate">{p.name}</span>
-                      {isManaged && <Boxes size={13} className="text-[var(--accent)] shrink-0" />}
-                    </div>
-                    <span className="text-[11px] text-[var(--muted)]">المخزون الكلي: {p.stock}</span>
-                  </button>
-                );
-              })}
-            </div>
-          </Card>
+          <p className="text-sm text-[var(--muted)]">
+            اختر منتجاً وخصّص لكل حساب — بائعاً كان أو مديراً — كمية منه، وزِد أو اسحب في أي وقت. لا يمكن توزيع أكثر من المخزون الفعلي غير الموزَّع، وكل حركة تُسجَّل باسم صاحبها في "سجل الحركات".
+          </p>
 
-          {product && (
+          {accounts.length === 0 ? (
+            <Card className="p-8"><EmptyState text="لا يوجد حسابات مسجّلة بعد لتوزيع المخزون عليها" /></Card>
+          ) : (
             <>
-              <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                <StatCard label="المخزون الكلي" value={product.stock} color="var(--accent-dark)" icon={Package} />
-                <StatCard label="مُخصص للبائعين" value={totalAllocated} color="var(--accent)" icon={Boxes} />
-                <StatCard label="غير مُخصص" value={unassigned} color="#8A7B6C" icon={Package} />
-                <StatCard label="تم بيعه من الحصص" value={totalSold} color="#3F7D57" icon={TrendingUp} />
-              </div>
-
-              <Card className="p-4">
-                <div className="flex items-center justify-between mb-3 gap-2 flex-wrap">
-                  <h3 className="font-bold">توزيع "{product.name}" على البائعين</h3>
-                  <div className="flex gap-2">
-                    <Btn variant="ghost" onClick={equalDistribute}><Users2 size={15} /> توزيع بالتساوي</Btn>
-                    {productAllocations.length > 0 && (
-                      <Btn variant="outline" onClick={clearProduct}><Trash2 size={15} /> إلغاء التوزيع</Btn>
-                    )}
-                  </div>
+              <Card className="p-4 space-y-3">
+                <div className="relative">
+                  <Search size={15} className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--muted)]" />
+                  <input className={inputCls + " pr-9"} placeholder="بحث عن منتج..." value={search} onChange={(e) => setSearch(e.target.value)} />
                 </div>
-
-                <div className="space-y-2">
-                  {sellersOnly.map((s) => {
-                    const rec = recordFor(s.id);
-                    const value = draft[s.id] !== undefined ? draft[s.id] : (rec ? String(rec.allocated) : "");
-                    const dirty = draft[s.id] !== undefined && draft[s.id] !== (rec ? String(rec.allocated) : "");
-                    const sold = rec ? rec.allocated - rec.remaining : 0;
-                    const low = rec && rec.remaining <= 0 && rec.allocated > 0;
-                    const deltaValue = deltaDraft[s.id] ?? "1";
-                    const delta = Math.max(1, Math.floor(Number(deltaValue) || 1));
+                <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-2 max-h-64 overflow-y-auto">
+                  {filteredProducts.map((p) => {
+                    const isManaged = managedProductIds.has(p.id);
+                    const active = p.id === productId;
                     return (
-                      <div key={s.id} className="flex items-center gap-3 bg-[var(--surface-2)] rounded-xl px-3 py-2.5 flex-wrap">
-                        <div className="flex-1 min-w-[120px]">
-                          <p className="font-semibold text-sm flex items-center gap-1.5">
-                            {s.name}
-                            <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-[var(--surface-3)] text-[var(--muted)]">
-                              {s.role === "admin" ? "مدير" : "بائع"}
-                            </span>
-                          </p>
-                          {rec ? (
-                            <p className={`text-xs ${low ? "text-[#B23A3A]" : "text-[var(--muted)]"}`}>
-                              المتبقي: {rec.remaining} / {rec.allocated} — تم بيع {sold}
-                            </p>
-                          ) : (
-                            <p className="text-xs text-[var(--muted)]">لم يُخصص له شيء بعد</p>
-                          )}
+                      <button
+                        key={p.id}
+                        onClick={() => setProductId(p.id)}
+                        className={`text-right px-3 py-2 rounded-xl border transition text-sm ${
+                          active ? "border-[var(--accent)] bg-[var(--surface-3)] font-bold" : "border-[var(--border)] hover:border-[var(--accent)]"
+                        }`}
+                      >
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="truncate">{p.name}</span>
+                          {isManaged && <Boxes size={13} className="text-[var(--accent)] shrink-0" />}
                         </div>
-
-                        {/* Quick +/- adjustment: top up or take back stock by a small step */}
-                        <div className="flex items-center gap-1">
-                          <button
-                            type="button"
-                            title="إنقاص الكمية"
-                            onClick={() => adjustSeller(s, -delta)}
-                            className="w-8 h-8 rounded-lg bg-[#FBEAEA] text-[#B23A3A] flex items-center justify-center hover:brightness-95 active:scale-95"
-                          >
-                            <Minus size={14} />
-                          </button>
-                          <input
-                            type="number"
-                            min="1"
-                            className={inputCls + " !w-14 !py-1.5 text-center"}
-                            value={deltaValue}
-                            onChange={(e) => setDeltaDraft((d) => ({ ...d, [s.id]: e.target.value }))}
-                          />
-                          <button
-                            type="button"
-                            title="زيادة الكمية"
-                            onClick={() => adjustSeller(s, delta)}
-                            className="w-8 h-8 rounded-lg bg-[#EAF6EF] text-[#3F7D57] flex items-center justify-center hover:brightness-95 active:scale-95"
-                          >
-                            <Plus size={14} />
-                          </button>
-                        </div>
-
-                        {/* Precise set: type the exact total assigned quantity */}
-                        <input
-                          type="number"
-                          min="0"
-                          className={inputCls + " !w-24 !py-1.5"}
-                          placeholder="الكمية الإجمالية"
-                          value={value}
-                          onChange={(e) => setDraft((d) => ({ ...d, [s.id]: e.target.value }))}
-                        />
-                        <Btn variant={dirty ? "primary" : "ghost"} className="!px-3 !py-1.5" disabled={!dirty} onClick={() => saveSeller(s)}>
-                          <Check size={14} /> حفظ
-                        </Btn>
-                      </div>
+                        <span className="text-[11px] text-[var(--muted)]">المخزون الكلي: {p.stock}</span>
+                      </button>
                     );
                   })}
                 </div>
               </Card>
+
+              {product && (
+                <>
+                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+                    <StatCard label="المخزون الفعلي" value={product.stock} color="var(--accent-dark)" icon={Package} />
+                    <StatCard label="بحوزة الحسابات (غير مباع)" value={totalRemaining} color="var(--accent)" icon={Boxes} />
+                    <StatCard label="متاح للتوزيع" value={freePool} color="#8A7B6C" icon={Package} />
+                    <StatCard label="بيع من الحصص" value={totalSold} color="#3F7D57" icon={TrendingUp} />
+                  </div>
+
+                  <Card className="p-4">
+                    <div className="flex items-center justify-between mb-3 gap-2 flex-wrap">
+                      <h3 className="font-bold">توزيع "{product.name}"</h3>
+                      <div className="flex gap-2">
+                        <Btn variant="ghost" onClick={equalDistribute}><Users2 size={15} /> توزيع بالتساوي</Btn>
+                        {productAllocations.length > 0 && (
+                          <Btn variant="outline" onClick={clearProduct}><Trash2 size={15} /> إلغاء التوزيع</Btn>
+                        )}
+                      </div>
+                    </div>
+
+                    <div className="space-y-2">
+                      {accounts.map((s) => {
+                        const rec = recordFor(s.id);
+                        const value = draft[s.id] !== undefined ? draft[s.id] : (rec ? String(rec.allocated) : "");
+                        const dirty = draft[s.id] !== undefined && draft[s.id] !== (rec ? String(rec.allocated) : "");
+                        const sold = rec ? rec.allocated - rec.remaining : 0;
+                        const low = rec && rec.remaining <= 0 && rec.allocated > 0;
+                        const deltaValue = deltaDraft[s.id] ?? "1";
+                        const delta = Math.max(1, Math.floor(Number(deltaValue) || 1));
+                        return (
+                          <div key={s.id} className="flex items-center gap-3 bg-[var(--surface-2)] rounded-xl px-3 py-2.5 flex-wrap">
+                            <div className="flex-1 min-w-[120px]">
+                              <p className="font-semibold text-sm flex items-center gap-1.5">
+                                {s.name}
+                                <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-[var(--surface-3)] text-[var(--muted)]">
+                                  {s.role === "admin" ? "مدير" : "بائع"}
+                                </span>
+                              </p>
+                              {rec ? (
+                                <p className={`text-xs ${low ? "text-[#B23A3A]" : "text-[var(--muted)]"}`}>
+                                  بحوزته: {rec.remaining} · إجمالي ما استلم: {rec.allocated} · باع: {sold}
+                                </p>
+                              ) : (
+                                <p className="text-xs text-[var(--muted)]">لم يُخصص له شيء بعد</p>
+                              )}
+                            </div>
+
+                            <div className="flex items-center gap-1">
+                              <button
+                                type="button"
+                                title="سحب كمية"
+                                onClick={() => adjustSeller(s, -delta)}
+                                className="w-8 h-8 rounded-lg bg-[#FBEAEA] text-[#B23A3A] flex items-center justify-center hover:brightness-95 active:scale-95"
+                              >
+                                <Minus size={14} />
+                              </button>
+                              <input
+                                type="number"
+                                min="1"
+                                className={inputCls + " !w-14 !py-1.5 text-center"}
+                                value={deltaValue}
+                                onChange={(e) => setDeltaDraft((d) => ({ ...d, [s.id]: e.target.value }))}
+                              />
+                              <button
+                                type="button"
+                                title="إضافة كمية"
+                                onClick={() => adjustSeller(s, delta)}
+                                className="w-8 h-8 rounded-lg bg-[#EAF6EF] text-[#3F7D57] flex items-center justify-center hover:brightness-95 active:scale-95"
+                              >
+                                <Plus size={14} />
+                              </button>
+                            </div>
+
+                            <input
+                              type="number"
+                              min="0"
+                              className={inputCls + " !w-24 !py-1.5"}
+                              placeholder="الإجمالي"
+                              value={value}
+                              onChange={(e) => setDraft((d) => ({ ...d, [s.id]: e.target.value }))}
+                            />
+                            <Btn variant={dirty ? "primary" : "ghost"} className="!px-3 !py-1.5" disabled={!dirty} onClick={() => saveSeller(s)}>
+                              <Check size={14} /> حفظ
+                            </Btn>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </Card>
+                </>
+              )}
             </>
+          )}
+        </>
+      )}
+
+      {tab === "summary" && (
+        <>
+          <select className={inputCls + " sm:w-64"} value={summaryFilter} onChange={(e) => setSummaryFilter(e.target.value)}>
+            <option value="all">كل الحسابات</option>
+            {accounts.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
+          </select>
+          <div className="grid md:grid-cols-2 gap-3">
+            {summaryAccounts.map(({ user, rows, allocated, remaining }) => (
+              <Card key={user.id} className="p-4">
+                <div className="flex items-center justify-between mb-3 gap-2">
+                  <p className="font-bold flex items-center gap-1.5">
+                    {user.name}
+                    <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-[var(--surface-3)] text-[var(--muted)]">{user.role === "admin" ? "مدير" : "بائع"}</span>
+                  </p>
+                  <p className="text-xs text-[var(--muted)]">بحوزته <b className="text-[var(--text)]">{remaining}</b> · باع <b className="text-[var(--text)]">{allocated - remaining}</b></p>
+                </div>
+                {rows.length === 0 ? (
+                  <p className="text-xs text-[var(--muted)]">لا توجد حصص مخصصة لهذا الحساب</p>
+                ) : (
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr className="text-[var(--muted)] border-b border-[var(--border)]">
+                        <th className="text-right font-semibold py-1.5">المنتج</th>
+                        <th className="font-semibold py-1.5">استلم</th>
+                        <th className="font-semibold py-1.5">باع</th>
+                        <th className="font-semibold py-1.5">بحوزته</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {rows.map((a) => (
+                        <tr key={a.id} className="border-b border-[var(--border)] last:border-0">
+                          <td className="py-1.5 font-semibold">{a.productName}</td>
+                          <td className="py-1.5 text-center">{a.allocated}</td>
+                          <td className="py-1.5 text-center">{a.allocated - a.remaining}</td>
+                          <td className={`py-1.5 text-center font-bold ${a.remaining <= 0 ? "text-[#B23A3A]" : "text-[#3F7D57]"}`}>{a.remaining}</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                )}
+              </Card>
+            ))}
+          </div>
+        </>
+      )}
+
+      {tab === "log" && (
+        <>
+          <div className="flex flex-col sm:flex-row gap-2">
+            <select className={inputCls + " sm:w-56"} value={logAccount} onChange={(e) => setLogAccount(e.target.value)}>
+              <option value="all">كل الحسابات</option>
+              {accounts.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
+            </select>
+            <select className={inputCls + " sm:w-56"} value={logProduct} onChange={(e) => setLogProduct(e.target.value)}>
+              <option value="all">كل المنتجات</option>
+              {loggedProducts.map(([id, name]) => <option key={id} value={id}>{name}</option>)}
+            </select>
+          </div>
+          {logList.length === 0 ? (
+            <Card className="p-8"><EmptyState text="لا توجد حركات مسجّلة بعد" /></Card>
+          ) : (
+            <div className="space-y-2">
+              {logList.slice(0, 200).map((e) => <AllocationLogRow key={e.id} e={e} />)}
+            </div>
           )}
         </>
       )}
@@ -4926,8 +5245,9 @@ function BackupPage({ data, onRestore, dailyBackup, onRefreshDailyBackup }) {
 
 /* ---------------------------------- Edit Sale (admin) ---------------------------------- */
 
-function EditSaleModal({ sale, products, onClose, onSave }) {
+function EditSaleModal({ sale, products, sellerAllocations = [], isOwnerEdit = false, onClose, onSave }) {
   const [items, setItems] = useState(sale.items.map((i) => ({ ...i })));
+  const [reason, setReason] = useState("");
   const [collected, setCollected] = useState(String(sale.collected));
   const [productId, setProductId] = useState("");
   const [qty, setQty] = useState(1);
@@ -4940,13 +5260,24 @@ function EditSaleModal({ sale, products, onClose, onSave }) {
     if (selectedProduct) setUnitPrice(String(selectedProduct.price));
   }, [productId]); // eslint-disable-line
 
-  // Stock available for a product = current stock + whatever this invoice already reserved for it.
+  // Stock still available for a product while editing = current stock +
+  // whatever this invoice already reserved for it, minus what the edited
+  // lines now use. For a product split between sellers, it's additionally
+  // capped by the invoice seller's own allocation (plus what this invoice
+  // had already drawn from it) — so correcting an invoice can never be used
+  // to sell stock that belongs to a colleague.
   const availableFor = (pid) => {
     const p = products.find((x) => x.id === pid);
     if (!p) return 0;
     const reserved = sale.items.filter((i) => i.productId === pid).reduce((a, i) => a + i.qty, 0);
     const usedInEdit = items.filter((i) => i.productId === pid).reduce((a, i) => a + i.qty, 0);
-    return p.stock + reserved - usedInEdit;
+    const physical = p.stock + reserved - usedInEdit;
+    if (!isProductManaged(sellerAllocations, pid)) return physical;
+    const drawnByThisSale = (sale.allocationSources || [])
+      .filter((src) => src.productId === pid && src.sellerId === sale.sellerId)
+      .reduce((a, src) => a + src.qty, 0);
+    const ownCap = remainingForSeller(sellerAllocations, sale.sellerId, pid) + drawnByThisSale - usedInEdit;
+    return Math.min(physical, ownCap);
   };
 
   const addLine = () => {
@@ -4964,7 +5295,12 @@ function EditSaleModal({ sale, products, onClose, onSave }) {
   const removeLine = (lineId) => setItems((c) => c.filter((l) => l.lineId !== lineId));
 
   const updateLineQty = (lineId, newQty) => {
-    setItems((c) => c.map((l) => (l.lineId === lineId ? { ...l, qty: newQty, total: newQty * l.price } : l)));
+    const line = items.find((l) => l.lineId === lineId);
+    if (!line) return;
+    // A line can grow only by what's still available for its product.
+    const maxQty = line.qty + Math.max(0, availableFor(line.productId));
+    const q = Math.min(newQty, maxQty);
+    setItems((c) => c.map((l) => (l.lineId === lineId ? { ...l, qty: q, total: q * l.price } : l)));
   };
 
   const subtotal = items.reduce((a, l) => a + l.total, 0);
@@ -4978,9 +5314,15 @@ function EditSaleModal({ sale, products, onClose, onSave }) {
     <div className="fixed inset-0 z-[9998] flex items-center justify-center bg-black/50 p-4 announce-backdrop" dir="rtl">
       <div className="bg-[var(--surface)] rounded-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto p-5 announce-pop">
         <div className="flex items-center justify-between mb-4">
-          <h3 className="text-lg font-bold">تعديل فاتورة {sale.invoiceNo}</h3>
+          <h3 className="text-lg font-bold">{isOwnerEdit ? "تصحيح فاتورة" : "تعديل فاتورة"} {sale.invoiceNo}</h3>
           <button onClick={onClose} className="p-1 text-[var(--muted)]"><X size={20} /></button>
         </div>
+        {isOwnerEdit && (
+          <p className="text-[11px] text-[var(--muted)] bg-[var(--surface-2)] rounded-xl px-3 py-2 mb-4 flex items-start gap-1.5">
+            <ShieldCheck size={13} className="shrink-0 mt-0.5" />
+            يمكنك تصحيح بيانات فواتيرك فقط في حال الخطأ في الإدخال. يُحفظ كل تعديل مع سببه في سجل الفاتورة ويطّلع عليه المدير.
+          </p>
+        )}
 
         <div className="space-y-2 mb-4">
           {items.map((l) => (
@@ -5050,8 +5392,27 @@ function EditSaleModal({ sale, products, onClose, onSave }) {
           <input type="number" min="0" step="0.001" className={inputCls} value={collected} onChange={(e) => setCollected(e.target.value)} />
         </Field>
 
+        <div className="mt-3">
+          <Field label={isOwnerEdit ? "سبب التصحيح (إلزامي)" : "سبب التعديل (اختياري)"}>
+            <input className={inputCls} value={reason} onChange={(e) => setReason(e.target.value)} placeholder="مثال: أدخلت الكمية 3 بدلاً من 2" />
+          </Field>
+        </div>
+
+        {(sale.editHistory || []).length > 0 && (
+          <div className="mt-3 text-[11px] text-[var(--muted)] space-y-1">
+            <p className="font-semibold">سجل التعديلات السابقة</p>
+            {sale.editHistory.slice(-4).reverse().map((h, i) => (
+              <p key={i}>• {h.byUserName} — {dateLabel(h.date)} {timeLabel(h.date)}{h.reason ? ` — ${h.reason}` : ""}</p>
+            ))}
+          </div>
+        )}
+
         <div className="flex gap-2 mt-4">
-          <Btn className="flex-1" onClick={() => onSave(items, Number(collected) || 0, discountType, discountNum)}>
+          <Btn
+            className="flex-1"
+            disabled={items.length === 0 || (isOwnerEdit && !reason.trim())}
+            onClick={() => onSave(items, Number(collected) || 0, discountType, discountNum, reason.trim())}
+          >
             <Save size={16} /> حفظ التعديلات
           </Btn>
           <Btn variant="outline" onClick={onClose}>إلغاء</Btn>
