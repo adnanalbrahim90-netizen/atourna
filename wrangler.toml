@@ -1,0 +1,17 @@
+name = "atourna"
+main = "worker/index.js"
+compatibility_date = "2026-08-01"
+
+[assets]
+directory = "./dist"
+binding = "ASSETS"
+not_found_handling = "single-page-application"
+# Only /api/* runs the Worker (phone notifications); everything else is
+# served directly from the built app, exactly as before.
+run_worker_first = ["/api/*"]
+
+[vars]
+# Public half of the notification key pair (safe to publish).
+# The PRIVATE half must be added as a Secret named VAPID_PRIVATE_KEY in the
+# Cloudflare dashboard: Workers & Pages → atourna → Settings → Variables and Secrets.
+VAPID_PUBLIC_KEY = "BC_grHH_KA2Kd-DX2JZxrRPci7GOQsXeeOFUe7f3jpISgG5-4cwwr9XlCxAu7TzKcb1CuLlIYweJdVckamVrlEY"
