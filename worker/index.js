@@ -11,10 +11,25 @@
 
 import { sendWebPush } from "./webpush.js";
 
-const json = (data, status = 200) =>
+// Addresses the app may be opened from — they're allowed to call this API.
+// (atourna.pages.dev has no Worker of its own, so it calls this one.)
+const ALLOWED_ORIGIN = /^https:\/\/(([a-z0-9-]+\.)?atourna\.pages\.dev|atourna\.adnanalbrahim90\.workers\.dev)$/;
+
+const corsHeaders = (origin) =>
+  origin && ALLOWED_ORIGIN.test(origin)
+    ? {
+        "Access-Control-Allow-Origin": origin,
+        "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
+        "Access-Control-Allow-Headers": "Content-Type",
+        "Access-Control-Max-Age": "86400",
+        Vary: "Origin",
+      }
+    : {};
+
+const makeJson = (cors) => (data, status = 200) =>
   new Response(JSON.stringify(data), {
     status,
-    headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" },
+    headers: { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store", ...cors },
   });
 
 const isSubscription = (s) =>
@@ -23,6 +38,13 @@ const isSubscription = (s) =>
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
+    const reqOrigin = request.headers.get("Origin");
+    const cors = url.pathname.startsWith("/api/") ? corsHeaders(reqOrigin) : {};
+    const json = makeJson(cors); // per-request, so concurrent requests never share headers
+
+    if (request.method === "OPTIONS" && url.pathname.startsWith("/api/")) {
+      return new Response(null, { status: 204, headers: cors });
+    }
 
     if (url.pathname === "/api/push/key") {
       if (!env.VAPID_PUBLIC_KEY || !env.VAPID_PRIVATE_KEY) {
@@ -35,8 +57,7 @@ export default {
       if (!env.VAPID_PUBLIC_KEY || !env.VAPID_PRIVATE_KEY) return json({ error: "push-not-configured" }, 503);
 
       // Only the app itself (same site) may trigger notifications.
-      const origin = request.headers.get("Origin");
-      if (origin && origin !== url.origin) return json({ error: "forbidden" }, 403);
+      if (reqOrigin && reqOrigin !== url.origin && !ALLOWED_ORIGIN.test(reqOrigin)) return json({ error: "forbidden" }, 403);
 
       let body;
       try { body = await request.json(); } catch { return json({ error: "bad-json" }, 400); }
