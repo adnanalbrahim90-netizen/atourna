@@ -232,6 +232,13 @@ const isIOSBrowserTab = () =>
 // the app is fully closed.
 const PUSH_SUBS_KEY = "perfume_push_subscriptions";
 
+// The notification server is the Cloudflare Worker. The app itself may be
+// opened from a different address (e.g. atourna.pages.dev, which has no
+// Worker behind it), so always talk to the Worker's own address directly;
+// it allows these calls from the app's addresses (CORS).
+const PUSH_API_ORIGIN = "https://atourna.adnanalbrahim90.workers.dev";
+const pushApi = (path) => (typeof window !== "undefined" && window.location.origin === PUSH_API_ORIGIN ? "" : PUSH_API_ORIGIN) + path;
+
 function urlB64ToUint8Array(b64) {
   const pad = "=".repeat((4 - (b64.length % 4)) % 4);
   const raw = atob((b64 + pad).replace(/-/g, "+").replace(/_/g, "/"));
@@ -254,9 +261,14 @@ async function registerPushForUser(user) {
 
   let publicKey;
   try {
-    const keyRes = await withTimeout(fetch("/api/push/key", { cache: "no-store" }), 10000, "timeout");
+    const keyRes = await withTimeout(fetch(pushApi("/api/push/key"), { cache: "no-store" }), 10000, "timeout");
     if (!keyRes.ok) return { ok: false, reason: `خادم الإشعارات غير جاهز (رمز ${keyRes.status})` };
-    publicKey = (await keyRes.json()).publicKey;
+    const text = await keyRes.text();
+    try {
+      publicKey = JSON.parse(text).publicKey;
+    } catch {
+      return { ok: false, reason: "وصل رد غير متوقع من خادم الإشعارات (صفحة بدل بيانات)" };
+    }
     if (!publicKey) return { ok: false, reason: "خادم الإشعارات لم يُرجع المفتاح العام" };
   } catch (e) {
     return { ok: false, reason: `تعذّر الوصول إلى خادم الإشعارات: ${e?.message || e}` };
@@ -338,7 +350,7 @@ async function sendPushToUsers(userIds, payload) {
     const list = await storeGet(PUSH_SUBS_KEY, []);
     const subs = list.filter((x) => userIds.includes(x.userId));
     if (subs.length === 0) return { sent: 0, devices: 0 };
-    const res = await fetch("/api/push/send", {
+    const res = await fetch(pushApi("/api/push/send"), {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ subscriptions: subs.map(({ endpoint, keys }) => ({ endpoint, keys })), payload }),
