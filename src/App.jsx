@@ -238,25 +238,69 @@ function urlB64ToUint8Array(b64) {
   return Uint8Array.from(raw, (c) => c.charCodeAt(0));
 }
 
-// Subscribes this device (if permitted) and links it to `user`. Returns true
-// when real push is active on this device.
+// Subscribes this device (if permitted) and links it to `user`. Returns
+// { ok: true } when real push is active on this device, otherwise
+// { ok: false, reason } with a readable Arabic explanation of the exact step
+// that failed — shown in the notifications panel so problems can be fixed
+// instead of guessed at.
+const withTimeout = (promise, ms, label) =>
+  Promise.race([promise, new Promise((_, reject) => setTimeout(() => reject(new Error(label)), ms))]);
+
 async function registerPushForUser(user) {
+  if (!user) return { ok: false, reason: "لا يوجد مستخدم مسجّل" };
+  if (!notificationsSupported()) return { ok: false, reason: "هذا المتصفح لا يدعم الإشعارات" };
+  if (!("PushManager" in window)) return { ok: false, reason: "هذا المتصفح لا يدعم إشعارات الدفع (PushManager) — جرّب Google Chrome" };
+  if (Notification.permission !== "granted") return { ok: false, reason: "لم يتم السماح بالإشعارات" };
+
+  let publicKey;
   try {
-    if (!user || !notificationsSupported() || Notification.permission !== "granted" || !("PushManager" in window)) return false;
-    const keyRes = await fetch("/api/push/key");
-    if (!keyRes.ok) return false; // Worker not deployed / key not configured yet
-    const { publicKey } = await keyRes.json();
-    if (!publicKey) return false;
-    const reg = await navigator.serviceWorker.ready;
-    const appKey = urlB64ToUint8Array(publicKey);
-    let sub = await reg.pushManager.getSubscription();
+    const keyRes = await withTimeout(fetch("/api/push/key", { cache: "no-store" }), 10000, "timeout");
+    if (!keyRes.ok) return { ok: false, reason: `خادم الإشعارات غير جاهز (رمز ${keyRes.status})` };
+    publicKey = (await keyRes.json()).publicKey;
+    if (!publicKey) return { ok: false, reason: "خادم الإشعارات لم يُرجع المفتاح العام" };
+  } catch (e) {
+    return { ok: false, reason: `تعذّر الوصول إلى خادم الإشعارات: ${e?.message || e}` };
+  }
+
+  let reg;
+  try {
+    reg = await navigator.serviceWorker.getRegistration();
+    if (!reg) reg = await navigator.serviceWorker.register("/sw.js");
+    reg = await withTimeout(navigator.serviceWorker.ready, 10000, "sw-timeout");
+  } catch (e) {
+    return { ok: false, reason: `لم يعمل ملف الخدمة (sw.js): ${e?.message || e}` };
+  }
+
+  const appKey = urlB64ToUint8Array(publicKey);
+  let sub;
+  try {
+    sub = await reg.pushManager.getSubscription();
     // If the device was subscribed with a different key, start fresh.
     const existingKey = sub?.options?.applicationServerKey ? new Uint8Array(sub.options.applicationServerKey) : null;
     if (sub && existingKey && existingKey.join(",") !== appKey.join(",")) {
       await sub.unsubscribe();
       sub = null;
     }
-    if (!sub) sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: appKey });
+    if (!sub) {
+      try {
+        sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: appKey });
+      } catch (first) {
+        // One clean retry — a stale half-created subscription is the most
+        // common cause of a first-time failure on Android.
+        const stale = await reg.pushManager.getSubscription();
+        if (stale) await stale.unsubscribe();
+        try {
+          sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: appKey });
+        } catch (second) {
+          return { ok: false, reason: `رفض الجوال الاشتراك في الإشعارات: ${second?.name || ""} ${second?.message || second}` };
+        }
+      }
+    }
+  } catch (e) {
+    return { ok: false, reason: `خطأ في الاشتراك: ${e?.name || ""} ${e?.message || e}` };
+  }
+
+  try {
     const data = sub.toJSON();
     const list = await storeGet(PUSH_SUBS_KEY, []);
     const current = list.find((x) => x.endpoint === data.endpoint);
@@ -265,11 +309,12 @@ async function registerPushForUser(user) {
         ...list.filter((x) => x.endpoint !== data.endpoint),
         { endpoint: data.endpoint, keys: data.keys, userId: user.id, userName: user.name, updatedAt: todayISO() },
       ].slice(-200);
-      await storeSet(PUSH_SUBS_KEY, next);
+      const saved = await storeSet(PUSH_SUBS_KEY, next);
+      if (!saved) return { ok: false, reason: "تعذّر حفظ اشتراك الجهاز في قاعدة البيانات" };
     }
-    return true;
-  } catch {
-    return false;
+    return { ok: true };
+  } catch (e) {
+    return { ok: false, reason: `تعذّر حفظ اشتراك الجهاز: ${e?.message || e}` };
   }
 }
 
@@ -292,21 +337,23 @@ async function sendPushToUsers(userIds, payload) {
   try {
     const list = await storeGet(PUSH_SUBS_KEY, []);
     const subs = list.filter((x) => userIds.includes(x.userId));
-    if (subs.length === 0) return;
+    if (subs.length === 0) return { sent: 0, devices: 0 };
     const res = await fetch("/api/push/send", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ subscriptions: subs.map(({ endpoint, keys }) => ({ endpoint, keys })), payload }),
     });
-    if (!res.ok) return;
+    if (!res.ok) return { sent: 0, devices: subs.length, error: `رمز ${res.status}` };
     const result = await res.json();
     if (result.expired?.length) {
       // Clean up devices that uninstalled the app or blocked notifications.
       const fresh = await storeGet(PUSH_SUBS_KEY, []);
       await storeSet(PUSH_SUBS_KEY, fresh.filter((x) => !result.expired.includes(x.endpoint)));
     }
-  } catch {
+    return { ...result, devices: subs.length };
+  } catch (e) {
     // notifications are best-effort
+    return { sent: 0, error: String(e?.message || e) };
   }
 }
 
@@ -1284,13 +1331,29 @@ export default function App() {
   // Real push (works with the app closed) — active once this device is
   // subscribed through the Worker. While active, the in-app local
   // notifications below are skipped so the phone doesn't buzz twice.
-  const [pushActive, setPushActive] = useState(false);
+  const [pushStatus, setPushStatus] = useState({ ok: false, reason: "" });
+  const pushActive = pushStatus.ok;
+  const [pushAttempt, setPushAttempt] = useState(0); // bump to retry registration
   useEffect(() => {
-    if (!currentUser || notifPermission !== "granted") { pushActiveRef.current = false; setPushActive(false); return; }
+    if (!currentUser || notifPermission !== "granted") { pushActiveRef.current = false; setPushStatus({ ok: false, reason: "" }); return; }
     let cancelled = false;
-    registerPushForUser(currentUser).then((ok) => { pushActiveRef.current = ok; if (!cancelled) setPushActive(ok); });
+    setPushStatus({ ok: false, reason: "جارٍ تسجيل الجهاز للإشعارات..." });
+    registerPushForUser(currentUser).then((st) => { pushActiveRef.current = st.ok; if (!cancelled) setPushStatus(st); });
     return () => { cancelled = true; };
-  }, [currentUser?.id, notifPermission]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [currentUser?.id, notifPermission, pushAttempt]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Sends a real push to this user's own devices — end-to-end check that
+  // works with a single phone (close the app right after tapping it).
+  const sendTestPush = async () => {
+    const r = await sendPushToUsers([currentUser.id], {
+      title: "🔔 إشعار تجريبي",
+      body: "إشعارات عطورنا تعمل على هذا الجهاز ✓",
+      tag: `test-${Date.now()}`,
+    });
+    if (r?.sent > 0) showToast(`تم إرسال إشعار تجريبي إلى ${r.sent} جهاز — يجب أن يظهر خلال ثوانٍ`);
+    else if (r?.devices === 0) showToast("لا يوجد جهاز مسجّل لحسابك بعد — اضغط إعادة المحاولة");
+    else showToast(`تعذّر الإرسال: ${r?.error || (r?.failed?.[0] ? `رمز ${r.failed[0].status} ${r.failed[0].error || ""}` : "سبب غير معروف")}`);
+  };
 
   const enableNotifications = async () => {
     if (!notificationsSupported()) return;
@@ -1916,6 +1979,9 @@ export default function App() {
               onRespondRequest={respondStockRequest}
               notifPermission={notifPermission}
               pushActive={pushActive}
+              pushReason={pushStatus.reason}
+              onRetryPush={() => setPushAttempt((n) => n + 1)}
+              onTestPush={sendTestPush}
               onEnableNotifications={enableNotifications}
             />
             <button
@@ -2358,7 +2424,7 @@ function NavBtn({ item, active, onClick }) {
 
 /* ---------------------------------- Notifications Bell ---------------------------------- */
 
-function NotificationsBell({ open, setOpen, announcements, currentUser, products, sales, isAdmin, setView, onOpenAnnouncement, stockRequests = [], onRespondRequest, notifPermission, pushActive, onEnableNotifications }) {
+function NotificationsBell({ open, setOpen, announcements, currentUser, products, sales, isAdmin, setView, onOpenAnnouncement, stockRequests = [], onRespondRequest, notifPermission, pushActive, pushReason, onRetryPush, onTestPush, onEnableNotifications }) {
   const panelRef = useRef(null);
   const [respondingId, setRespondingId] = useState(null); // guards against double-clicking approve/reject
 
@@ -2429,6 +2495,25 @@ function NotificationsBell({ open, setOpen, announcements, currentUser, products
             )}
             {notifPermission === "denied" && <span className="text-[10px] text-[#B23A3A] font-semibold">الإشعارات محظورة من إعدادات المتصفح</span>}
           </div>
+          {notifPermission === "granted" && (
+            <div className="px-4 py-2 border-b border-[var(--border)] bg-[var(--surface-2)] flex items-center gap-2 flex-wrap">
+              {pushActive ? (
+                <>
+                  <p className="text-[10px] text-[#3F7D57] flex-1">✓ تصل الإشعارات حتى والتطبيق مغلق</p>
+                  <button onClick={onTestPush} className="text-[10px] font-bold px-2 py-1 rounded-lg bg-[var(--surface-3)] text-[var(--accent-dark)] hover:bg-[var(--border)]">
+                    إرسال إشعار تجريبي
+                  </button>
+                </>
+              ) : (
+                <>
+                  <p className="text-[10px] text-[#B23A3A] flex-1 leading-relaxed">{pushReason || "الإشعارات لا تصل والتطبيق مغلق"}</p>
+                  <button onClick={onRetryPush} className="text-[10px] font-bold px-2 py-1 rounded-lg bg-[var(--surface-3)] text-[var(--accent-dark)] hover:bg-[var(--border)]">
+                    إعادة المحاولة
+                  </button>
+                </>
+              )}
+            </div>
+          )}
 
           <div className="max-h-80 overflow-y-auto divide-y divide-[var(--border)]">
             {!hasNotifications ? (
