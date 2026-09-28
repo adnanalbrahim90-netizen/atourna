@@ -227,17 +227,14 @@ const isIOSBrowserTab = () =>
 /* ---------------------- Real phone notifications (Web Push) ---------------------- */
 // Each device that allows notifications registers a push subscription,
 // stored in the shared data under PUSH_SUBS_KEY tagged with the logged-in
-// user. To notify someone, the app asks the site's Cloudflare Worker
+// user. To notify someone, the app asks the site's own push API (Cloudflare Pages Functions)
 // (/api/push/send) to deliver to that user's devices — it arrives even when
 // the app is fully closed.
 const PUSH_SUBS_KEY = "perfume_push_subscriptions";
 
-// The notification server is the Cloudflare Worker. The app itself may be
-// opened from a different address (e.g. atourna.pages.dev, which has no
-// Worker behind it), so always talk to the Worker's own address directly;
-// it allows these calls from the app's addresses (CORS).
-const PUSH_API_ORIGIN = "https://atourna.adnanalbrahim90.workers.dev";
-const pushApi = (path) => (typeof window !== "undefined" && window.location.origin === PUSH_API_ORIGIN ? "" : PUSH_API_ORIGIN) + path;
+// The notification API is served on the app's own address
+// (atourna.pages.dev → Cloudflare Pages Functions in /functions).
+const pushApi = (path) => path;
 
 function urlB64ToUint8Array(b64) {
   const pad = "=".repeat((4 - (b64.length % 4)) % 4);
