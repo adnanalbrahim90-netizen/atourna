@@ -9,7 +9,8 @@ import {
   Landmark, HandCoins, CalendarRange, Users2, KeyRound, Type,
   Trophy, Palette, Medal, Target, Flame, Award, Sparkles, Grid3x3,
   History, LogIn, ShieldAlert, Edit3, ScrollText,
-  Boxes, ArrowLeftRight, PackageCheck, Minus, Send, ChevronUp, ChevronDown
+  Boxes, ArrowLeftRight, PackageCheck, Minus, Send, ChevronUp, ChevronDown,
+  ChevronLeft, ChevronRight, LayoutGrid
 } from "lucide-react";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
@@ -533,14 +534,14 @@ function PerfumeMark({ size = 40 }) {
           <stop offset="100%" style={{ stopColor: "var(--accent)" }} />
         </linearGradient>
         <linearGradient id="bottleGrad" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0%" stopColor="#7A4B63" />
+          <stop offset="0%" style={{ stopColor: "var(--accent)" }} />
           <stop offset="100%" style={{ stopColor: "var(--accent-dark)" }} />
         </linearGradient>
       </defs>
       <rect x="24" y="6" width="16" height="10" rx="2" fill="url(#capGrad)" />
       <rect x="28" y="14" width="8" height="6" fill="#D8B978" />
       <path d="M18 24C18 20.7 20.7 18 24 18H40C43.3 18 46 20.7 46 24V50C46 54.4 42.4 58 38 58H26C21.6 58 18 54.4 18 50V24Z" fill="url(#bottleGrad)" />
-      <path d="M22 30H42V50C42 52.2 40.2 54 38 54H26C23.8 54 22 52.2 22 50V30Z" fill="#8A5470" opacity="0.5" />
+      <path d="M22 30H42V50C42 52.2 40.2 54 38 54H26C23.8 54 22 52.2 22 50V30Z" fill="#FFFFFF" opacity="0.14" />
       <circle cx="32" cy="40" r="3.2" fill="#F4E7C9" opacity="0.9" />
     </svg>
   );
@@ -549,28 +550,22 @@ function PerfumeMark({ size = 40 }) {
 /* ---------------------------------- shared UI atoms ---------------------------------- */
 
 function Btn({ children, variant = "primary", className = "", style, ...props }) {
-  const base = "inline-flex items-center justify-center gap-1.5 rounded-xl px-4 py-2.5 text-sm font-semibold transition active:scale-[0.98] disabled:opacity-50 disabled:pointer-events-none";
   const variants = {
-    primary: "text-white shadow-sm hover:brightness-105",
-    dark: "bg-[var(--accent-dark)] text-white hover:brightness-90 shadow-sm",
-    ghost: "bg-[var(--surface-3)] text-[var(--accent-dark)] hover:bg-[var(--border)]",
-    outline: "border border-[var(--border)] text-[var(--text)] hover:bg-[var(--surface-2)]",
-    danger: "bg-[#B23A3A] text-white hover:bg-[#9c3131]",
+    primary: "nm-btn solid",
+    dark: "nm-btn ink",
+    ghost: "nm-btn ink",
+    outline: "nm-btn",
+    danger: "nm-btn solid-danger",
   };
-  const primaryStyle = variant === "primary" ? { background: "linear-gradient(135deg, var(--accent), var(--accent-dark))", ...style } : style;
   return (
-    <button className={`${base} ${variants[variant]} ${className}`} style={primaryStyle} {...props}>
+    <button className={`${variants[variant] || "nm-btn"} ${className}`} style={style} {...props}>
       {children}
     </button>
   );
 }
 
 function Card({ children, className = "" }) {
-  return (
-    <div className={`bg-[var(--surface)] rounded-2xl border border-[var(--border)] shadow-[0_2px_12px_rgba(91,35,51,0.06)] ${className}`}>
-      {children}
-    </div>
-  );
+  return <div className={`nm-card ${className}`}>{children}</div>;
 }
 
 function Field({ label, children }) {
@@ -582,7 +577,7 @@ function Field({ label, children }) {
   );
 }
 
-const inputCls = "w-full rounded-xl border border-[var(--border)] bg-[var(--input-bg)] px-3 py-2.5 text-sm text-[var(--text)] outline-none focus:ring-2 focus:ring-[var(--accent)]/40 focus:border-[var(--accent)]";
+const inputCls = "nm-input px-3.5 py-2.5 text-sm";
 
 /* ---------------------------------- Login ---------------------------------- */
 
@@ -1068,6 +1063,29 @@ const NAV_ITEMS = [
   { key: "activitylog", label: "سجل الدخول والنشاطات", icon: History, roles: ["admin"], primaryOnly: true },
 ];
 
+// «الملمس الناعم» navigation: four top tabs + a floating sell knob. Every other
+// page lives under «المزيد» and is still reached through its original view key.
+const MAIN_TABS = [
+  { key: "home", label: "الرئيسية", icon: Home, view: "dashboard" },
+  { key: "invoices", label: "الفواتير", icon: Receipt, view: "records" },
+  { key: "stock", label: "المخزن", icon: Package, view: "inventory" },
+  { key: "more", label: "المزيد", icon: LayoutGrid, view: "more" },
+];
+const tabOfView = (view) =>
+  view === "dashboard" ? "home"
+  : view === "records" ? "invoices"
+  : view === "inventory" || view === "allocations" ? "stock"
+  : view === "newsale" ? "sell"
+  : "more";
+
+const MORE_GROUPS = [
+  { title: "الأداء والتواصل", keys: ["stats", "challenges", "announcements"] },
+  { title: "المالية", keys: ["expenses", "accounting", "capital"], adminOnly: true },
+  { title: "الإدارة", keys: ["users", "settings", "backup", "activitylog"], adminOnly: true },
+  { title: "لي", keys: ["preferences"] },
+];
+const MORE_SHORT = { challenges: "التحديات", capital: "أرباح الشركاء", activitylog: "سجل النشاطات", backup: "النسخ الاحتياطي" };
+
 /* ---------------------------------- App Shell ---------------------------------- */
 
 export default function App() {
@@ -1419,6 +1437,13 @@ export default function App() {
     setPersonalCardStyleState(styleKey);
     if (styleKey) window.localStorage.setItem("atourna_personal_style", styleKey);
     else window.localStorage.removeItem("atourna_personal_style");
+  };
+
+  const logout = () => {
+    logActivity(currentUser, "تسجيل خروج", "");
+    unlinkPushDevice();
+    window.localStorage.removeItem("atourna_session_username");
+    setCurrentUser(null);
   };
 
   const toggleDarkMode = () => {
@@ -1949,31 +1974,19 @@ export default function App() {
         />
       )}
 
-      {/* Top bar */}
-      <header className="no-print sticky top-0 z-30 bg-[var(--bg)]/95 backdrop-blur border-b border-[var(--border)]" style={{ boxShadow: "0 1px 0 0 var(--border), 0 2px 10px -6px rgba(0,0,0,0.15)" }}>
-        <div className="h-[3px] w-full" style={{ background: "linear-gradient(90deg, var(--accent) 0%, var(--accent-dark) 50%, var(--accent) 100%)" }} />
-        <div className="max-w-6xl mx-auto flex items-center justify-between px-4 py-3">
-          <div className="flex items-center gap-2">
-            <button className="md:hidden p-2 -mr-2 text-[var(--accent-dark)]" onClick={() => setMobileNavOpen(true)}>
-              <Menu size={22} />
-            </button>
-            <PerfumeMark size={32} />
-            <span className="font-bold text-[var(--accent-dark)] text-lg" style={{ fontFamily: "'Amiri', serif" }}>
-              {settings.companyName || "عطورنا"}
-            </span>
-          </div>
+      {/* Header: brand + bell, then the four-tab segmented navigation */}
+      <header className="no-print nm-header sticky top-0 z-30" style={{ paddingTop: "env(safe-area-inset-top, 0px)" }}>
+        <div className="max-w-5xl mx-auto px-4 pt-3 pb-3 flex flex-col gap-3">
           <div className="flex items-center gap-3">
-            <div className="text-left hidden sm:block">
-              <p className="text-xs text-[var(--muted)] leading-tight">{isAdmin ? "مدير النظام" : "بائع"}{currentUser.canManageStock && !currentUser.isPrimaryAdmin ? " · مسؤول المخزن" : ""}</p>
-              <p className="text-sm font-semibold leading-tight">{currentUser.name}</p>
-            </div>
-            <button
-              onClick={toggleDarkMode}
-              className="p-2 rounded-lg text-[var(--accent)] hover:bg-[var(--surface-3)]"
-              title={darkMode ? "الوضع الفاتح" : "الوضع الداكن"}
-            >
-              {darkMode ? <Sun size={20} /> : <Moon size={20} />}
+            <button onClick={() => setView("more")} className="nm-knob" aria-label="حسابي والمزيد" title={currentUser.name}>
+              <span className="text-sm font-bold nm-ink">{(currentUser.name || "?").trim().charAt(0)}</span>
             </button>
+            <div className="flex-1 min-w-0">
+              <p className="font-bold text-[15px] leading-tight truncate">{settings.companyName || "عطورنا"}</p>
+              <p className="text-[11px] nm-mut leading-tight truncate">
+                {currentUser.name} · {isAdmin ? "مدير النظام" : "بائع"}{currentUser.canManageStock && !currentUser.isPrimaryAdmin ? " · مسؤول المخزن" : ""}
+              </p>
+            </div>
             <NotificationsBell
               open={notifOpen}
               setOpen={setNotifOpen}
@@ -1993,93 +2006,25 @@ export default function App() {
               onTestPush={sendTestPush}
               onEnableNotifications={enableNotifications}
             />
-            <button
-              onClick={() => { logActivity(currentUser, "تسجيل خروج", ""); unlinkPushDevice(); window.localStorage.removeItem("atourna_session_username"); setCurrentUser(null); }}
-              className="p-2 rounded-lg text-[#B23A3A] hover:bg-[#FBEAEA]"
-              title="تسجيل الخروج"
-            >
-              <LogOut size={20} />
-            </button>
           </div>
+          <nav className="nm-seg w-full max-w-xl mx-auto" role="tablist" aria-label="التنقل الرئيسي">
+            {MAIN_TABS.map((t) => {
+              const Icon = t.icon;
+              const on = tabOfView(view) === t.key;
+              return (
+                <button key={t.key} role="tab" aria-selected={on} aria-current={on ? "page" : undefined} className={on ? "is-on" : ""} onClick={() => setView(t.view)}>
+                  <Icon size={16} />
+                  {t.label}
+                </button>
+              );
+            })}
+          </nav>
         </div>
       </header>
 
-      <div className="max-w-6xl mx-auto md:flex">
-        {/* Sidebar (desktop) */}
-        <aside className="no-print hidden md:flex md:flex-col md:w-56 shrink-0 border-l border-[var(--border)] sticky top-[61px] h-[calc(100vh-61px)]">
-          <button
-            onClick={() => sidebarRef.current?.scrollBy({ top: -180, behavior: "smooth" })}
-            className="shrink-0 flex items-center justify-center py-1.5 text-[var(--muted)] hover:text-[var(--accent)] hover:bg-[var(--surface-3)] transition"
-            title="تمرير القائمة للأعلى"
-          >
-            <ChevronUp size={16} />
-          </button>
-          <div ref={sidebarRef} className="flex-1 min-h-0 overflow-y-auto py-1 px-2 flex flex-col gap-1 scroll-smooth">
-            {visibleNav.map((n) => (
-              <NavBtn key={n.key} item={n} active={view === n.key} onClick={() => setView(n.key)} />
-            ))}
-          </div>
-          <button
-            onClick={() => sidebarRef.current?.scrollBy({ top: 180, behavior: "smooth" })}
-            className="shrink-0 flex items-center justify-center py-1.5 text-[var(--muted)] hover:text-[var(--accent)] hover:bg-[var(--surface-3)] transition"
-            title="تمرير القائمة للأسفل"
-          >
-            <ChevronDown size={16} />
-          </button>
-        </aside>
-
-        {/* Mobile nav drawer */}
-        {mobileNavOpen && (
-          <div className="no-print fixed inset-0 z-40 md:hidden">
-            <div className="absolute inset-0 bg-black/30" onClick={() => setMobileNavOpen(false)} />
-            <div
-              className="absolute right-0 top-0 bottom-0 w-64 max-w-[80vw] bg-[var(--surface)] shadow-xl flex flex-col"
-              style={{ maxHeight: "100vh" }}
-            >
-              <div className="flex items-center justify-between px-3 py-2 shrink-0 bg-[var(--surface)] border-b border-[var(--border)]">
-                <div className="flex items-center gap-2">
-                  <PerfumeMark size={28} />
-                  <span className="font-bold text-[var(--accent-dark)]" style={{ fontFamily: "'Amiri', serif" }}>عطورنا</span>
-                </div>
-                <button onClick={() => setMobileNavOpen(false)} className="p-1 text-[var(--muted)]">
-                  <X size={20} />
-                </button>
-              </div>
-              <button
-                onClick={() => mobileNavRef.current?.scrollBy({ top: -180, behavior: "smooth" })}
-                className="shrink-0 flex items-center justify-center py-1.5 text-[var(--muted)] hover:text-[var(--accent)] hover:bg-[var(--surface-3)] transition"
-                title="تمرير القائمة للأعلى"
-              >
-                <ChevronUp size={16} />
-              </button>
-              <div
-                ref={mobileNavRef}
-                className="flex-1 min-h-0 p-3 pt-0 flex flex-col gap-1 overflow-y-auto overscroll-contain scroll-smooth"
-                style={{ WebkitOverflowScrolling: "touch" }}
-              >
-                {visibleNav.map((n) => (
-                  <NavBtn
-                    key={n.key}
-                    item={n}
-                    active={view === n.key}
-                    onClick={() => { setView(n.key); setMobileNavOpen(false); }}
-                  />
-                ))}
-                <div className="h-2 shrink-0" />
-              </div>
-              <button
-                onClick={() => mobileNavRef.current?.scrollBy({ top: 180, behavior: "smooth" })}
-                className="shrink-0 flex items-center justify-center py-1.5 text-[var(--muted)] hover:text-[var(--accent)] hover:bg-[var(--surface-3)] transition border-t border-[var(--border)]"
-                title="تمرير القائمة للأسفل"
-              >
-                <ChevronDown size={16} />
-              </button>
-            </div>
-          </div>
-        )}
-
+      <div className="max-w-5xl mx-auto">
         {/* Main content */}
-        <main className="no-print flex-1 min-w-0 px-4 py-5 pb-24 md:pb-8">
+        <main className="no-print min-w-0 px-4 pt-3" style={{ paddingBottom: "calc(130px + env(safe-area-inset-bottom, 0px))" }}>
         {!notifBannerHidden && (notifPermission !== "unsupported" || isIOSBrowserTab()) && (
           <NotificationPermissionBanner
             permission={notifPermission}
@@ -2087,9 +2032,41 @@ export default function App() {
             onHide={() => { setNotifBannerHidden(true); window.localStorage.setItem("atourna_notif_banner_hidden", "1"); }}
           />
         )}
+        {tabOfView(view) === "stock" && (
+          <div className="nm-tog max-w-md mx-auto mb-5" role="tablist" aria-label="أقسام المخزن">
+            <button role="tab" aria-selected={view === "inventory"} className={view === "inventory" ? "is-on" : ""} onClick={() => setView("inventory")}>
+              <Package size={15} /> المنتجات
+            </button>
+            <button role="tab" aria-selected={view === "allocations"} className={view === "allocations" ? "is-on" : ""} onClick={() => setView("allocations")}>
+              <Boxes size={15} /> {canManageAllocations(currentUser) ? "التوزيع" : "مخزوني المخصص"}
+            </button>
+          </div>
+        )}
+        {tabOfView(view) === "more" && view !== "more" && (
+          <button onClick={() => setView("more")} className="nm-btn ink mb-5 !py-2 !px-4 text-[13px]">
+            <ChevronRight size={16} /> المزيد
+          </button>
+        )}
+        {view === "newsale" && (
+          <button onClick={() => setView("dashboard")} className="nm-btn mb-5 !py-2 !px-4 text-[13px]">
+            <ChevronRight size={16} /> رجوع
+          </button>
+        )}
         <div key={view} className="view-transition">
           {view === "dashboard" && (
             <Dashboard sales={sales} products={products} users={users} sellerGoals={sellerGoals} currentUser={currentUser} setView={setView} activeTheme={activeTheme} />
+          )}
+          {view === "more" && (
+            <MorePage
+              currentUser={currentUser}
+              isAdmin={isAdmin}
+              visibleNav={visibleNav}
+              setView={setView}
+              darkMode={darkMode}
+              onToggleDarkMode={toggleDarkMode}
+              onLogout={logout}
+              unseenAnnouncements={announcements.filter((a) => !getSeenAnnouncementIds(currentUser.id).includes(a.id)).length}
+            />
           )}
           {view === "newsale" && (
             <NewSale
@@ -2383,31 +2360,21 @@ export default function App() {
         </main>
       </div>
 
-      {/* Mobile bottom nav */}
-      <nav className="no-print md:hidden fixed bottom-0 inset-x-0 z-30 bg-[var(--surface)] border-t border-[var(--border)] flex justify-around py-1.5">
-        {visibleNav.slice(0, 5).map((n) => {
-          const Icon = n.icon;
-          const active = view === n.key;
-          return (
-            <button
-              key={n.key}
-              onClick={() => setView(n.key)}
-              className={`relative flex flex-col items-center gap-0.5 px-2 py-1.5 rounded-lg text-[10px] font-semibold transition-transform ${active ? "text-[var(--accent)] scale-105" : "text-[var(--muted)]"}`}
-            >
-              <Icon size={20} />
-              {n.label}
-              {active && (
-                <span className="absolute -top-1.5 w-1.5 h-1.5 rounded-full bg-[var(--accent)] fade-in" />
-              )}
-            </button>
-          );
-        })}
-      </nav>
+      {/* Floating sell knob — present everywhere except while selling */}
+      {view !== "newsale" && (
+        <>
+          <div className="no-print nm-fabfade" aria-hidden="true" />
+          <button className="no-print nm-fab" onClick={() => setView("newsale")} aria-label="بيع جديد">
+            <span><Plus size={26} strokeWidth={2.4} /></span>
+            <span>بيع</span>
+          </button>
+        </>
+      )}
 
       {toast && (
-        <div className="no-print fixed bottom-20 md:bottom-6 inset-x-0 flex justify-center z-50">
-          <div className="toast-anim bg-[var(--accent-dark)] text-white text-sm px-4 py-2.5 rounded-xl shadow-lg flex items-center gap-2">
-            <Check size={16} className="text-[#8FD19E]" /> {toast}
+        <div className="no-print fixed inset-x-0 flex justify-center z-50 px-4" style={{ bottom: "calc(112px + env(safe-area-inset-bottom, 0px))" }} role="status" aria-live="polite">
+          <div className="toast-anim nm-out text-sm font-semibold px-5 py-3 rounded-full flex items-center gap-2 max-w-full" style={{ color: "var(--ok)" }}>
+            <Check size={16} /> <span className="text-[var(--text)]">{toast}</span>
           </div>
         </div>
       )}
@@ -2476,19 +2443,17 @@ function NotificationsBell({ open, setOpen, announcements, currentUser, products
     <div className="relative" ref={panelRef}>
       <button
         onClick={() => setOpen((o) => !o)}
-        className="relative p-2 rounded-lg text-[var(--accent-dark)] hover:bg-[var(--surface-3)]"
+        className={`nm-knob ${open ? "is-on" : ""}`}
         title="الإشعارات"
+        aria-label={hasNotifications ? `الإشعارات، ${badgeCount} جديدة` : "الإشعارات"}
+        aria-expanded={open}
       >
-        <Bell size={20} />
-        {hasNotifications && (
-          <span className="absolute -top-0.5 -left-0.5 min-w-[16px] h-4 px-1 rounded-full bg-[#B23A3A] text-white text-[9px] font-bold flex items-center justify-center fade-in">
-            {badgeCount}
-          </span>
-        )}
+        <Bell size={19} />
+        {hasNotifications && <span className="nm-badge fade-in">{badgeCount}</span>}
       </button>
 
       {open && (
-        <div className="absolute left-0 top-12 w-80 max-w-[90vw] bg-[var(--surface)] border border-[var(--border)] rounded-2xl shadow-xl z-50 announce-pop overflow-hidden" dir="rtl">
+        <div className="absolute left-0 top-14 w-80 max-w-[90vw] bg-[var(--surface)] rounded-3xl nm-pop z-50 announce-pop overflow-hidden" dir="rtl">
           <div className="px-4 py-3 border-b border-[var(--border)] flex items-center gap-2">
             <Bell size={16} className="text-[var(--accent)]" />
             <p className="font-bold text-sm flex-1">الإشعارات</p>
@@ -2611,98 +2576,225 @@ function NotificationsBell({ open, setOpen, announcements, currentUser, products
 function GlobalStyle() {
   return (
     <style>{`
-      @import url('https://fonts.googleapis.com/css2?family=Amiri:wght@400;700&family=Tajawal:wght@400;500;700;900&display=swap');
-      * { font-family: 'Tajawal', sans-serif; }
+      @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@300;400;500;600;700&family=Amiri:wght@400;700&family=Tajawal:wght@400;500;700;800&display=swap');
+      * { font-family: 'IBM Plex Sans Arabic', 'Tajawal', system-ui, sans-serif; }
 
+      /* ================= «الملمس الناعم» — one tactile material for the whole app =================
+         Raised (nm-out) = something you press. Sunk (nm-in) = something you type into or read from.
+         Pressed-in = the chosen option. Teal is reserved for the primary action and key values. */
       :root {
-        --bg: #ffffff;
-        --surface: #ffffff;
-        --surface-2: #FBF9F5;
-        --surface-3: #F7F1E6;
-        --border: #F0E6D0;
-        --text: #2B211A;
-        --muted: #8A7B6C;
-        --input-bg: #FBF9F5;
-        --accent: #B8894A;
-        --accent-dark: #5B2333;
+        --bg: #E8ECF1;
+        --surface: #E8ECF1;
+        --surface-2: #E8ECF1;
+        --surface-3: #E1E6EC;
+        --border: #D3D9E0;
+        --text: #27303B;
+        --muted: #5C6877;
+        --faint: #8B95A2;
+        --input-bg: #E8ECF1;
+        --accent: #2F7F86;
+        --accent-dark: #1C5A60;
+        --accent-ink: var(--accent-dark);
+        --s-hi: #FFFFFF;
+        --s-lo: #C3C9D2;
+        --ok: #2C7A52; --ok-t: #DDEEE4;
+        --due: #8A4B12; --due-t: #F3E6D6;
+        --bad: #A93636; --bad-t: #F4DEDE;
+        --info: #2F5E9A; --info-t: #DCE6F3;
+        --nm-out: 6px 6px 12px var(--s-lo), -6px -6px 12px var(--s-hi);
+        --nm-out-lg: 10px 10px 20px var(--s-lo), -10px -10px 20px var(--s-hi);
+        --nm-out-sm: 3px 3px 6px var(--s-lo), -3px -3px 6px var(--s-hi);
+        --nm-in: inset 4px 4px 8px var(--s-lo), inset -4px -4px 8px var(--s-hi);
+        --nm-in-sm: inset 2px 2px 5px var(--s-lo), inset -2px -2px 5px var(--s-hi);
+        color-scheme: light;
       }
       html.dark {
-        --bg: #16110F;
-        --surface: #211A18;
-        --surface-2: #291F1C;
-        --surface-3: #2F2420;
-        --border: #3D2E28;
-        --text: #F3E9DE;
-        --muted: #C2AC9B;
-        --input-bg: #291F1C;
+        --bg: #2A2F37;
+        --surface: #2A2F37;
+        --surface-2: #2A2F37;
+        --surface-3: #30363F;
+        --border: #3A414C;
+        --text: #E7EBF0;
+        --muted: #A5AEBA;
+        --faint: #7D8794;
+        --input-bg: #2A2F37;
+        --accent-ink: color-mix(in srgb, var(--accent) 55%, white);
+        --s-hi: #363C46;
+        --s-lo: #1C2026;
+        --ok: #7ACF9E; --ok-t: #2C3E35;
+        --due: #E3A865; --due-t: #43382B;
+        --bad: #F08C8C; --bad-t: #472F31;
+        --info: #8DB4E8; --info-t: #2D3848;
+        color-scheme: dark;
       }
-      html[data-theme="emerald"] { --accent: #2F8F6B; --accent-dark: #124430; }
-      html[data-theme="rose"] { --accent: #C2547E; --accent-dark: #6B1F3A; }
-      html[data-theme="sapphire"] { --accent: #3B6EA8; --accent-dark: #16324F; }
-      html[data-theme="violet"] { --accent: #7B5EA8; --accent-dark: #3E2A5C; }
-      html[data-theme="amber"] { --accent: #C97B3D; --accent-dark: #7A3E1D; }
-      html[data-theme="gem"] { --accent: #C9A227; --accent-dark: #4A2C1D; --bg: linear-gradient(160deg, #EFE1C4 0%, #DCC291 45%, #C9AE87 100%); }
+      html[data-theme="emerald"] { --accent: #2F8F6B; --accent-dark: #1B5E45; }
+      html[data-theme="rose"] { --accent: #B24A6A; --accent-dark: #7A2E47; }
+      html[data-theme="sapphire"] { --accent: #3B6EA8; --accent-dark: #244A75; }
+      html[data-theme="violet"] { --accent: #6E55A0; --accent-dark: #46356B; }
+      html[data-theme="amber"] { --accent: #B06A2E; --accent-dark: #7A461C; }
+      html[data-theme="gem"] { --accent: #A8842A; --accent-dark: #6E5518; }
       html[data-theme="candy"] { --accent: #12A594; --accent-dark: #0B6B60; }
-      html[data-theme="pastel"] { --accent: #5BADA6; --accent-dark: #2E6B65; --bg: linear-gradient(160deg, #FBFBFA 0%, #F3F6F5 100%); }
+      html[data-theme="pastel"] { --accent: #5BADA6; --accent-dark: #2E6B65; }
 
       html, body { background: var(--bg); -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
-      body { color: var(--text); transition: background-color .2s ease, color .2s ease; }
+      body { color: var(--text); transition: background-color .25s ease, color .25s ease; }
+      ::selection { background: color-mix(in srgb, var(--accent) 25%, transparent); }
 
-      /* Gem-cut angled card shape used only by the "الجواهر الذهبي" vivid theme */
-      .stat-facet { clip-path: polygon(5% 0%, 100% 0%, 95% 100%, 0% 100%); }
+      /* ---------- material primitives ---------- */
+      .nm-out { background: var(--bg); box-shadow: var(--nm-out); }
+      .nm-out-lg { background: var(--bg); box-shadow: var(--nm-out-lg); }
+      .nm-out-sm { background: var(--bg); box-shadow: var(--nm-out-sm); }
+      .nm-in { background: var(--bg); box-shadow: var(--nm-in); }
+      .nm-in-sm { background: var(--bg); box-shadow: var(--nm-in-sm); }
+      .nm-card { background: var(--bg); border-radius: 22px; box-shadow: var(--nm-out); border: 0; }
+      .nm-well { background: var(--bg); border-radius: 18px; box-shadow: var(--nm-in); }
+      .nm-pop { box-shadow: 0 24px 48px -12px rgba(20,28,40,.35), var(--nm-out) !important; }
+      .nm-ink { color: var(--accent-ink); }
+      .nm-mut { color: var(--muted); }
+      .nm-num { direction: ltr; unicode-bidi: isolate; font-variant-numeric: tabular-nums; }
+
+      /* knobs (round raised buttons) */
+      .nm-knob { width: 40px; height: 40px; border-radius: 50%; display: inline-grid; place-items: center; flex: none; position: relative;
+        background: var(--bg); color: var(--text); box-shadow: var(--nm-out-sm); transition: box-shadow .18s ease, transform .12s ease, color .18s ease; }
+      .nm-knob:hover { color: var(--accent-ink); }
+      .nm-knob:active, .nm-knob.is-on { box-shadow: var(--nm-in-sm); color: var(--accent-ink); transform: none !important; }
+      .nm-knob.lg { width: 56px; height: 56px; box-shadow: var(--nm-out); }
+      .nm-knob.sm { width: 34px; height: 34px; }
+      .nm-knob.danger { color: var(--bad); }
+      .nm-knob .nm-badge { position: absolute; top: -4px; left: -4px; min-width: 18px; height: 18px; padding: 0 4px; border-radius: 99px; background: #C24848; color: #fff; font-size: 10px; font-weight: 700; display: grid; place-items: center; box-shadow: 0 2px 5px rgba(150,40,40,.35); }
+      .nm-act { display: inline-flex; flex-direction: column; align-items: center; gap: 6px; font-size: 11px; font-weight: 600; color: var(--muted); min-width: 50px; }
+      .nm-act:hover { color: var(--text); }
+
+      /* buttons */
+      :where(.nm-btn) { padding: 11px 18px; font-size: 14px; }
+      .nm-btn { display: inline-flex; align-items: center; justify-content: center; gap: 7px; border-radius: 999px; font-weight: 700;
+        background: var(--bg); color: var(--text); box-shadow: var(--nm-out); border: 0; transition: box-shadow .18s ease, transform .12s ease, filter .18s ease; white-space: nowrap; }
+      .nm-btn:hover { color: var(--accent-ink); }
+      .nm-btn:active { box-shadow: var(--nm-in-sm); transform: none !important; }
+      .nm-btn.ink { color: var(--accent-ink); }
+      .nm-btn.danger { color: var(--bad); }
+      .nm-btn.solid { color: #fff; background: linear-gradient(145deg, color-mix(in srgb, var(--accent) 88%, white), var(--accent-dark));
+        box-shadow: 6px 6px 12px var(--s-lo), -6px -6px 12px var(--s-hi), inset 1px 1px 2px rgba(255,255,255,.25); }
+      .nm-btn.solid:hover { filter: brightness(1.06); color: #fff; }
+      .nm-btn.solid-danger { color: #fff; background: linear-gradient(145deg, #C45555, #962F2F); box-shadow: 6px 6px 12px var(--s-lo), -6px -6px 12px var(--s-hi), inset 1px 1px 2px rgba(255,255,255,.2); }
+      .nm-btn.solid-danger:hover { color: #fff; filter: brightness(1.06); }
+      .nm-btn:disabled { opacity: .5; pointer-events: none; }
+
+      /* inputs are always sunk */
+      .nm-input { width: 100%; background: var(--bg); border: 0 !important; border-radius: 14px; box-shadow: var(--nm-in); color: var(--text); outline: none; transition: box-shadow .18s ease; }
+      .nm-input::placeholder { color: var(--faint); }
+      .nm-input:focus { box-shadow: var(--nm-in), 0 0 0 2px color-mix(in srgb, var(--accent) 35%, transparent); }
+      select.nm-input { appearance: none; -webkit-appearance: none; background-image: linear-gradient(45deg, transparent 50%, var(--muted) 50%), linear-gradient(135deg, var(--muted) 50%, transparent 50%);
+        background-position: 18px 55%, 13px 55%; background-size: 5px 5px, 5px 5px; background-repeat: no-repeat; padding-left: 32px !important; }
+
+      /* segmented choices: sunk track, raised choice */
+      .nm-tog { display: flex; gap: 4px; padding: 5px; border-radius: 999px; background: var(--bg); box-shadow: var(--nm-in); }
+      .nm-tog > button { flex: 1; display: inline-flex; align-items: center; justify-content: center; gap: 6px; padding: 8px 10px; border-radius: 999px; font-size: 12.5px; font-weight: 600; color: var(--muted); transition: box-shadow .2s ease, color .2s ease; white-space: nowrap; }
+      .nm-tog > button.is-on { color: var(--accent-ink); font-weight: 700; background: var(--bg); box-shadow: var(--nm-out-sm); }
+
+      /* main navigation: raised track, the current tab pressed IN */
+      .nm-seg { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; padding: 5px; border-radius: 999px; background: var(--bg); box-shadow: var(--nm-out); }
+      .nm-seg > button { display: flex; align-items: center; justify-content: center; gap: 6px; padding: 9px 4px; border-radius: 999px; font-size: 13px; font-weight: 600; color: var(--muted); transition: box-shadow .2s ease, color .2s ease; }
+      .nm-seg > button.is-on { color: var(--accent-ink); font-weight: 700; box-shadow: var(--nm-in-sm); }
+      .nm-seg > button svg { width: 16px; height: 16px; }
+      @media (max-width: 420px) { .nm-seg > button svg { display: none; } }
+
+      /* status pills */
+      .nm-pill { display: inline-flex; align-items: center; gap: 4px; font-size: 10.5px; font-weight: 700; padding: 3px 10px; border-radius: 999px; white-space: nowrap; box-shadow: var(--nm-in-sm); }
+      .nm-pill.ok { color: var(--ok); background: var(--ok-t); }
+      .nm-pill.due { color: var(--due); background: var(--due-t); }
+      .nm-pill.bad { color: var(--bad); background: var(--bad-t); }
+      .nm-pill.info { color: var(--info); background: var(--info-t); }
+      .nm-pill.plain { color: var(--muted); background: var(--bg); }
+
+      /* switch */
+      .nm-switch { width: 48px; height: 28px; border-radius: 99px; background: var(--bg); box-shadow: var(--nm-in-sm); position: relative; flex: none; transition: background .2s ease; }
+      .nm-switch::after { content: ""; position: absolute; top: 4px; right: 4px; width: 20px; height: 20px; border-radius: 50%; background: var(--bg); box-shadow: 2px 2px 4px var(--s-lo), -1px -1px 3px var(--s-hi); transition: right .22s cubic-bezier(.34,1.4,.64,1); }
+      .nm-switch.is-on { background: linear-gradient(145deg, var(--accent), var(--accent-dark)); box-shadow: inset 2px 2px 4px rgba(0,0,0,.25); }
+      .nm-switch.is-on::after { right: 24px; background: #F4F7F9; }
+
+      /* groove progress */
+      .nm-groove { height: 12px; border-radius: 99px; padding: 3px; background: var(--bg); box-shadow: var(--nm-in-sm); }
+      .nm-groove > span { display: block; height: 6px; border-radius: 99px; background: linear-gradient(270deg, color-mix(in srgb, var(--accent) 80%, white), var(--accent-dark)); transition: width .5s ease; }
+
+      /* the signature dial */
+      .nm-dial { width: 196px; height: 196px; border-radius: 50%; margin: 0 auto; display: grid; place-items: center; background: var(--bg); box-shadow: var(--nm-out-lg); }
+      .nm-dial .track { width: 160px; height: 160px; border-radius: 50%; position: relative; display: grid; place-items: center; background: var(--bg); box-shadow: var(--nm-in); }
+      .nm-dial svg { position: absolute; inset: 0; width: 160px; height: 160px; transform: rotate(-90deg) scaleY(-1); }
+      .nm-dial circle.arc { transition: stroke-dasharray .9s cubic-bezier(.2,.8,.2,1); }
+      .nm-dial .core { width: 118px; height: 118px; border-radius: 50%; display: grid; place-content: center; text-align: center; gap: 2px; background: var(--bg); box-shadow: 5px 5px 10px var(--s-lo), -5px -5px 10px var(--s-hi); }
+
+      /* product tiles in the point of sale */
+      .nm-tile { background: var(--bg); border-radius: 20px; box-shadow: var(--nm-out); border: 0 !important; transition: box-shadow .18s ease, transform .12s ease; }
+      .nm-tile:not(:disabled):active { box-shadow: var(--nm-in-sm); }
+      .nm-tile.req { box-shadow: var(--nm-in-sm); outline: 1.5px dashed var(--due); outline-offset: -6px; }
+      .nm-tile.in-cart { box-shadow: var(--nm-out), inset 0 0 0 2px color-mix(in srgb, var(--accent) 45%, transparent); }
+
+      /* floating sell knob */
+      .nm-fab { position: fixed; left: 50%; bottom: calc(18px + env(safe-area-inset-bottom, 0px)); transform: translateX(-50%); z-index: 35; display: grid; justify-items: center; gap: 4px; }
+      .nm-fab > span:first-child { width: 64px; height: 64px; border-radius: 50%; display: grid; place-items: center; color: #fff;
+        background: linear-gradient(145deg, color-mix(in srgb, var(--accent) 85%, white), var(--accent-dark));
+        box-shadow: 8px 8px 18px var(--s-lo), -8px -8px 18px var(--s-hi), inset 2px 2px 4px rgba(255,255,255,.25), inset -3px -3px 6px rgba(0,0,0,.18); transition: transform .15s ease; }
+      .nm-fab:active > span:first-child { transform: scale(.94); }
+      .nm-fab > span:last-child { font-size: 11.5px; font-weight: 700; color: var(--accent-ink); }
+      .nm-fabfade { position: fixed; left: 0; right: 0; bottom: 0; height: 110px; z-index: 30; pointer-events: none; background: linear-gradient(to top, var(--bg) 45%, transparent); }
+
+      /* sticky header */
+      .nm-header { background: color-mix(in srgb, var(--bg) 88%, transparent); backdrop-filter: blur(14px) saturate(1.2); -webkit-backdrop-filter: blur(14px) saturate(1.2); }
+
+      /* ---------- legacy utility remaps so every existing page wears the new material ---------- */
+      div.bg-\[var\(--surface-2\)\], div.bg-\[var\(--surface-3\)\], label.bg-\[var\(--surface-2\)\], span.bg-\[var\(--surface-3\)\] { background: var(--bg) !important; box-shadow: var(--nm-in-sm); }
+      button.bg-\[var\(--surface-2\)\], button.bg-\[var\(--surface-3\)\] { background: var(--bg) !important; box-shadow: var(--nm-out-sm); }
+      button.bg-\[var\(--surface-2\)\]:active, button.bg-\[var\(--surface-3\)\]:active { box-shadow: var(--nm-in-sm); }
+      button.bg-\[var\(--accent\)\] { box-shadow: var(--nm-out-sm); }
+      html .text-\[\#B23A3A\] { color: var(--bad); }
+      html .text-\[\#3F7D57\] { color: var(--ok); }
+      html .text-\[\#C97B3D\] { color: var(--due); }
+      html .text-\[\#3B6EA8\] { color: var(--info); }
+      html .bg-\[\#FBEAEA\] { background-color: var(--bad-t); }
+      html .bg-\[\#FFF6E5\] { background-color: var(--due-t); }
+      html .bg-\[\#EAF6EF\] { background-color: var(--ok-t); }
+      html .bg-\[\#EAF1F8\] { background-color: var(--info-t); }
+      html .bg-\[\#FBF9F5\] { background-color: var(--bg); }
+      html .border-\[\#F5EEDF\], html .border-\[\#E8B4B4\] { border-color: var(--border); }
+      html.dark .text-\[var\(--accent-dark\)\], html.dark .text-\[var\(--accent\)\] { color: var(--accent-ink); }
+      html .rounded-2xl.shadow-xl, html .rounded-3xl.shadow-2xl { box-shadow: 0 24px 48px -12px rgba(20,28,40,.35), var(--nm-out); }
+      table thead tr { color: var(--muted); }
 
       ::-webkit-scrollbar { width: 8px; height: 8px; }
-      ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 8px; }
+      ::-webkit-scrollbar-thumb { background: var(--s-lo); border-radius: 8px; }
 
-      /* ---------- motion & interactivity polish ---------- */
-      @keyframes fadeInUp {
-        from { opacity: 0; transform: translateY(6px); }
-        to { opacity: 1; transform: translateY(0); }
-      }
-      @keyframes popIn {
-        from { opacity: 0; transform: scale(0.92); }
-        to { opacity: 1; transform: scale(1); }
-      }
-      @keyframes backdropIn {
-        from { opacity: 0; }
-        to { opacity: 1; }
-      }
-      @keyframes toastUp {
-        from { opacity: 0; transform: translateY(10px) translateX(-50%); }
-        to { opacity: 1; transform: translateY(0) translateX(-50%); }
-      }
-      @keyframes shimmer {
-        0% { background-position: -200px 0; }
-        100% { background-position: 200px 0; }
-      }
+      /* ---------- motion ---------- */
+      @keyframes fadeInUp { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+      @keyframes popIn { from { opacity: 0; transform: scale(0.94); } to { opacity: 1; transform: none; } }
+      @keyframes backdropIn { from { opacity: 0; } to { opacity: 1; } }
+      @keyframes toastUp { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
       @keyframes spin { to { transform: rotate(360deg); } }
       @keyframes orbitSpin { from { transform: rotate(0deg); } to { transform: rotate(360deg); } }
       @keyframes orbitCounterSpin { from { transform: translateX(-50%) rotate(0deg); } to { transform: translateX(-50%) rotate(-360deg); } }
 
-      .loader-orbit { position: relative; width: 128px; height: 128px; display: flex; align-items: center; justify-content: center; }
-      .loader-orbit-rotator { position: absolute; inset: 0; animation: orbitSpin 2.4s linear infinite; }
-      .loader-orbit-icon { position: absolute; top: 2px; left: 50%; transform: translateX(-50%); animation: orbitCounterSpin 2.4s linear infinite; filter: drop-shadow(0 2px 6px rgba(184,137,74,0.35)); }
-      .loader-center-text { position: relative; z-index: 2; font-size: 13px; font-weight: 800; color: var(--accent-dark); text-align: center; line-height: 1.3; white-space: nowrap; }
+      .loader-orbit { position: relative; width: 140px; height: 140px; display: flex; align-items: center; justify-content: center; border-radius: 50%; background: var(--bg); box-shadow: var(--nm-out-lg); }
+      .loader-orbit-rotator { position: absolute; inset: 8px; animation: orbitSpin 2.4s linear infinite; }
+      .loader-orbit-icon { position: absolute; top: 2px; left: 50%; transform: translateX(-50%); animation: orbitCounterSpin 2.4s linear infinite; }
+      .loader-center-text { position: relative; z-index: 2; font-size: 13px; font-weight: 700; color: var(--accent-ink); text-align: center; white-space: nowrap; }
 
-      .fade-in { animation: fadeInUp .28s ease both; }
-      .view-transition { animation: fadeInUp .22s ease both; }
-      .announce-pop { animation: popIn .25s cubic-bezier(0.34,1.56,0.64,1) both; }
+      .fade-in { animation: fadeInUp .28s ease backwards; }
+      .view-transition { animation: fadeInUp .24s ease backwards; }
+      .announce-pop { animation: popIn .25s cubic-bezier(0.34,1.56,0.64,1) backwards; }
       .announce-backdrop { animation: backdropIn .2s ease both; }
       .toast-anim { animation: toastUp .25s cubic-bezier(0.34,1.56,0.64,1) both; }
 
-      .card-hover { transition: transform .18s ease, box-shadow .18s ease, border-color .18s ease; }
-      .card-hover:hover { transform: translateY(-2px); box-shadow: 0 8px 24px rgba(91,35,51,0.10); border-color: var(--accent); }
+      .card-hover { transition: transform .18s ease, box-shadow .18s ease; }
+      .card-hover:hover { transform: translateY(-2px); }
 
       button, a, select, .card-hover { -webkit-tap-highlight-color: transparent; }
-      button:not(:disabled) { transition: transform .12s ease, background-color .15s ease, box-shadow .15s ease, opacity .15s ease; }
-      button:not(:disabled):active { transform: scale(0.96); }
-
-      input, select, textarea { transition: border-color .15s ease, box-shadow .15s ease; }
-
+      button:not(:disabled) { transition: transform .12s ease, background-color .15s ease, box-shadow .18s ease, opacity .15s ease, color .15s ease; }
+      button:not(:disabled):active { transform: scale(0.97); }
       .spin-slow { animation: spin 1s linear infinite; }
-
       * { scroll-behavior: smooth; }
+      :focus-visible { outline: 2px solid color-mix(in srgb, var(--accent) 60%, transparent); outline-offset: 2px; }
 
+      @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation: none !important; transition: none !important; } }
       @media print {
         .no-print { display: none !important; }
         html, body { background: white !important; }
@@ -2713,6 +2805,26 @@ function GlobalStyle() {
 
 
 /* ---------------------------------- Dashboard ---------------------------------- */
+
+function SoftDial({ value, pct, label, caption, size = 196 }) {
+  const r = 71;
+  const c = 2 * Math.PI * r;
+  const dash = Math.max(0, Math.min(100, pct)) / 100 * c;
+  return (
+    <div className="nm-dial" role="img" aria-label={`${label}: ${value}، ${caption}`} style={size !== 196 ? { width: size, height: size } : undefined}>
+      <div className="track">
+        <svg viewBox="0 0 160 160" aria-hidden="true">
+          <circle className="arc" cx="80" cy="80" r={r} fill="none" stroke="var(--accent)" strokeWidth="8" strokeLinecap="round" strokeDasharray={`${dash} ${c}`} />
+        </svg>
+        <div className="core">
+          <span className="text-[10.5px] nm-mut">{label}</span>
+          <span className="nm-num text-[20px] font-bold leading-tight">{value}</span>
+          <span className="text-[11px] font-bold nm-ink">{caption}</span>
+        </div>
+      </div>
+    </div>
+  );
+}
 
 function Dashboard({ sales, products, users, sellerGoals, currentUser, setView, activeTheme }) {
   const isAdmin = currentUser.role === "admin";
@@ -2735,130 +2847,203 @@ function Dashboard({ sales, products, users, sellerGoals, currentUser, setView, 
     });
     const ranked = Array.from(map.values()).sort((a, b) => b.collected - a.collected);
     const idx = ranked.findIndex((r) => r.id === currentUser.id);
-    return { rank: idx + 1, total: ranked.length, collected: ranked[idx]?.collected || 0 };
+    return { rank: idx + 1, total: ranked.length, collected: ranked[idx]?.collected || 0, top: ranked[0]?.collected || 0 };
   }, [sales, users, currentUser.id]);
 
   const myGoal = sellerGoals?.[currentUser.id] || 0;
   const goalProgress = myGoal > 0 ? Math.min(100, (monthRank.collected / myGoal) * 100) : 0;
-  const medal = monthRank.rank === 1 ? "🥇" : monthRank.rank === 2 ? "🥈" : monthRank.rank === 3 ? "🥉" : null;
+  const dialPct = myGoal > 0 ? goalProgress : monthRank.top > 0 ? (monthRank.collected / monthRank.top) * 100 : 0;
+  const hour = new Date().getHours();
+  const greeting = hour < 12 ? "صباح الخير" : "مساء الخير";
+  const monthName = new Date().toLocaleDateString("ar", { month: "long" });
+  const canManage = canManageAllocations(currentUser);
+  const medalColor = monthRank.rank === 1 ? "#A8842A" : monthRank.rank === 2 ? "#7C8794" : monthRank.rank === 3 ? "#9A6420" : "var(--accent-ink)";
+
+  const actions = [
+    { label: "بيع", icon: ShoppingCart, view: "newsale", ink: true },
+    { label: "تحصيل", icon: Wallet, view: "records" },
+    { label: "هدية/تالف", icon: Gift, view: "inventory" },
+    { label: canManage ? "التوزيع" : "حصتي", icon: Boxes, view: "allocations" },
+  ];
 
   return (
-    <div className="space-y-5">
+    <div className="max-w-3xl mx-auto flex flex-col gap-6">
       <div>
-        <h2 className="text-xl font-bold text-[var(--text)]">مرحباً، {currentUser.name} 😊</h2>
-        <p className="text-sm text-[var(--muted)]">نظرة عامة على أداء المتجر</p>
+        <h2 className="text-xl font-bold">{greeting}، {currentUser.name}</h2>
+        <p className="text-sm nm-mut">نظرة على أدائك وأداء المتجر</p>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <StatCard label="عدد الفواتير" value={mySales.length} color="var(--accent-dark)" icon={Receipt} themeKey={activeTheme} slot={0} />
-        <StatCard label="إجمالي المبيعات" value={fmt(totalRevenue) + " K.D"} color="var(--accent)" icon={TrendingUp} themeKey={activeTheme} slot={1} />
-        <StatCard label="المحصل" value={fmt(totalCollected) + " K.D"} color="#3F7D57" icon={Wallet} themeKey={activeTheme} slot={2} />
-        <StatCard label="المتبقي" value={fmt(totalRemaining) + " K.D"} color="#B23A3A" icon={AlertTriangle} themeKey={activeTheme} slot={3} />
+      <div className="grid md:grid-cols-2 gap-6 items-center">
+        <SoftDial
+          value={fmt(monthRank.collected)}
+          pct={dialPct}
+          label={`محصّلي في ${monthName}`}
+          caption={myGoal > 0 ? `${goalProgress.toFixed(0)}٪ من هدف ${fmt(myGoal).replace(/\.000$/, "")}` : `الترتيب ${monthRank.rank || "-"} من ${monthRank.total}`}
+        />
+        <div className="grid grid-cols-4 gap-2 justify-items-center">
+          {actions.map((a) => {
+            const Icon = a.icon;
+            return (
+              <button key={a.label} onClick={() => setView(a.view)} className="nm-act">
+                <span className={`nm-knob lg ${a.ink ? "nm-ink" : ""}`}><Icon size={22} /></span>
+                {a.label}
+              </button>
+            );
+          })}
+        </div>
       </div>
 
-      <button onClick={() => setView("challenges")} className="w-full text-right">
-        <Card className="p-4 card-hover border-2 border-[var(--accent)]/30">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="w-11 h-11 rounded-full flex items-center justify-center shrink-0" style={{ background: `color-mix(in srgb, var(--accent) 18%, transparent)` }}>
-                {medal ? <span className="text-xl">{medal}</span> : <Trophy size={20} className="text-[var(--accent)]" />}
-              </div>
-              <div>
-                <p className="font-bold text-sm flex items-center gap-1.5">
-                  ترتيبك هذا الشهر: #{monthRank.rank || "-"} من {monthRank.total}
-                </p>
-                <p className="text-xs text-[var(--muted)]">{fmt(monthRank.collected)} K.D محصَّلة هذا الشهر · اضغط لعرض التحديات والأوسمة</p>
-              </div>
-            </div>
-          </div>
+      <section className="flex flex-col gap-3" aria-label="أداء المتجر">
+        <div className="flex items-baseline justify-between">
+          <h3 className="font-bold text-[15px]">أداء المتجر</h3>
+          <span className="text-xs nm-mut">كل البائعين</span>
+        </div>
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
+          <StatCard label="عدد الفواتير" value={mySales.length} icon={Receipt} />
+          <StatCard label="إجمالي المبيعات" value={fmt(totalRevenue)} unit="د.ك" icon={TrendingUp} />
+          <StatCard label="المحصّل" value={fmt(totalCollected)} unit="د.ك" icon={Wallet} tone="ink" />
+          <StatCard label="المتبقي" value={fmt(totalRemaining)} unit="د.ك" icon={AlertTriangle} tone={totalRemaining > 0 ? "due" : undefined} />
+        </div>
+      </section>
+
+      <button onClick={() => setView("challenges")} className="nm-card p-4 flex items-center gap-3 text-right card-hover">
+        <span className="nm-knob" style={{ boxShadow: "var(--nm-in-sm)", color: medalColor }}><Medal size={20} /></span>
+        <span className="flex-1 min-w-0">
+          <span className="block font-bold text-sm">ترتيبك هذا الشهر: {monthRank.rank || "-"} من {monthRank.total}</span>
+          <span className="block text-xs nm-mut mt-0.5">التحديات والأوسمة</span>
           {myGoal > 0 && (
-            <div className="mt-3">
-              <div className="w-full h-2 rounded-full bg-[var(--surface-3)] overflow-hidden">
-                <div className="h-full rounded-full" style={{ width: `${goalProgress}%`, background: "linear-gradient(90deg, var(--accent), var(--accent-dark))" }} />
-              </div>
-              <p className="text-[10px] text-[var(--muted)] mt-1">{goalProgress.toFixed(0)}% من هدفك الشهري ({fmt(myGoal)} K.D)</p>
-            </div>
+            <span className="block mt-2 nm-groove" aria-hidden="true"><span style={{ width: `${goalProgress}%` }} /></span>
           )}
-        </Card>
+        </span>
+        <ChevronLeft size={18} className="nm-mut shrink-0" />
       </button>
 
-      <div className="grid md:grid-cols-2 gap-4">
-        <Card className="p-4">
-          <h3 className="font-bold mb-3">آخر المبيعات</h3>
-          {mySales.length === 0 ? (
-            <EmptyState text="لا توجد مبيعات مسجلة بعد" />
-          ) : (
-            <div className="space-y-2">
-              {mySales.slice(0, 5).map((s) => (
-                <div key={s.id} className="flex items-center justify-between text-sm border-b border-[#F5EEDF] pb-2 last:border-0">
-                  <div>
-                    <p className="font-semibold">{s.invoiceNo}</p>
-                    <p className="text-xs text-[var(--muted)]">{s.sellerName} · {dateLabel(s.date)}</p>
+      <div className="grid md:grid-cols-2 gap-6">
+        <section className="flex flex-col gap-3">
+          <div className="flex items-baseline justify-between">
+            <h3 className="font-bold text-[15px]">آخر المبيعات</h3>
+            <button onClick={() => setView("records")} className="text-xs font-semibold nm-ink">عرض الكل</button>
+          </div>
+          <div className="nm-card px-4 py-1">
+            {mySales.length === 0 ? (
+              <EmptyState text="لا توجد مبيعات مسجلة بعد" />
+            ) : (
+              mySales.slice(0, 5).map((s, i) => (
+                <div key={s.id} className={`flex items-center gap-3 py-3 ${i ? "border-t border-[var(--border)]" : ""}`}>
+                  <span className="nm-knob sm" style={{ boxShadow: "var(--nm-in-sm)" }}><Receipt size={15} className="nm-ink" /></span>
+                  <div className="flex-1 min-w-0">
+                    <p className="font-semibold text-sm">{s.invoiceNo}</p>
+                    <p className="text-xs nm-mut truncate">{s.sellerName} · {dateLabel(s.date)}</p>
                   </div>
-                  <p className="font-bold text-[var(--accent)]">{fmt(s.total)} K.D</p>
+                  <div className="flex flex-col items-end gap-1">
+                    <span className="nm-num font-bold text-sm">{fmt(s.total)}</span>
+                    {s.remaining > 0 ? <span className="nm-pill due">متبقٍ {fmt(s.remaining)}</span> : <span className="nm-pill ok">مسدّدة</span>}
+                  </div>
                 </div>
-              ))}
-            </div>
-          )}
-          <button onClick={() => setView("newsale")} className="mt-3 text-sm font-semibold text-[var(--accent)] flex items-center gap-1">
-            <Plus size={16} /> تسجيل عملية بيع جديدة
-          </button>
-        </Card>
+              ))
+            )}
+          </div>
+        </section>
 
-        <Card className="p-4">
-          <h3 className="font-bold mb-3">تنبيهات المخزون</h3>
+        <section className="flex flex-col gap-3">
+          <div className="flex items-baseline justify-between">
+            <h3 className="font-bold text-[15px]">تنبيهات المخزون</h3>
+            <button onClick={() => setView("inventory")} className="text-xs font-semibold nm-ink">المخزن</button>
+          </div>
           {lowStock.length === 0 ? (
-            <EmptyState text="جميع المنتجات بكميات كافية" />
+            <div className="nm-well p-4"><EmptyState text="جميع المنتجات بكميات كافية" /></div>
           ) : (
-            <div className="space-y-2">
+            <div className="grid grid-cols-2 gap-3">
               {lowStock.slice(0, 6).map((p) => (
-                <div key={p.id} className="flex items-center justify-between text-sm">
-                  <p className="font-semibold flex items-center gap-1.5"><AlertTriangle size={14} className="text-[#B23A3A]" />{p.name}</p>
-                  <p className="text-[#B23A3A] font-bold">{p.stock} متبقي</p>
+                <div key={p.id} className="nm-well px-4 py-3">
+                  <p className="font-bold text-sm truncate">{p.name}</p>
+                  <p className={`text-xs font-semibold ${p.stock <= 0 ? "text-[var(--bad)]" : "text-[var(--due)]"}`}>
+                    {p.stock <= 0 ? "نفد المخزون" : `${p.stock} متبقي`}
+                  </p>
                 </div>
               ))}
             </div>
           )}
-        </Card>
+        </section>
       </div>
     </div>
   );
 }
 
-function StatCard({ label, value, color, icon: Icon, themeKey, slot }) {
-  const vivid = themeKey && VIVID_THEMES[themeKey] && slot != null ? VIVID_THEMES[themeKey] : null;
-  const vividColor = vivid ? vivid.stats[slot % vivid.stats.length] : null;
-
-  if (vivid) {
-    return (
-      <div
-        className={`card-hover relative overflow-hidden p-4 shadow-md ${vivid.facet ? "stat-facet" : "rounded-2xl"}`}
-        style={{ background: `linear-gradient(150deg, ${vividColor}, color-mix(in srgb, ${vividColor} 65%, black))`, border: vivid.facet ? "1px solid rgba(255,255,255,0.35)" : "none" }}
-      >
-        {Icon && (
-          <div className="absolute top-3 left-3 w-6 h-6 rounded-full flex items-center justify-center bg-white/25">
-            <Icon size={12} className="text-white" />
-          </div>
-        )}
-        <p className="text-[11px] text-white/85 mb-1.5 leading-snug line-clamp-2 pl-7">{label}</p>
-        <p dir="ltr" className="text-sm font-extrabold leading-tight whitespace-nowrap text-right text-white">{value}</p>
-      </div>
-    );
-  }
-
+// KPI shown as a sunk well: a label you read, never a button you press.
+// (color/themeKey/slot are still accepted from older call sites; the soft
+// design keeps one consistent look instead of per-theme coloured cards.)
+function StatCard({ label, value, unit, color, icon: Icon, tone }) {
+  if (!tone && color) tone = color === "#B23A3A" ? "bad" : color === "#3F7D57" ? "ok" : color === "var(--accent)" ? "ink" : undefined;
+  if (!unit && typeof value === "string" && value.endsWith(" K.D")) { value = value.slice(0, -4); unit = "د.ك"; }
+  const valueColor = tone === "ink" ? "var(--accent-ink)" : tone === "due" ? "var(--due)" : tone === "bad" ? "var(--bad)" : tone === "ok" ? "var(--ok)" : "var(--text)";
   return (
-    <Card className="p-4 card-hover relative overflow-hidden">
-      {Icon && (
-        <div
-          className="absolute top-3 left-3 w-6 h-6 rounded-full flex items-center justify-center"
-          style={{ background: `color-mix(in srgb, ${color} 16%, transparent)` }}
-        >
-          <Icon size={12} style={{ color }} />
+    <div className="nm-well px-4 py-3 relative min-w-0">
+      {Icon && <Icon size={14} className="absolute top-3 left-3 nm-mut" aria-hidden="true" />}
+      <p className="text-[11px] nm-mut mb-1 leading-snug line-clamp-2 pl-6">{label}</p>
+      <p className="nm-num text-base font-bold leading-tight whitespace-nowrap text-right" style={{ color: valueColor }}>
+        {value}{unit && <span className="text-[10px] font-medium nm-mut ml-1">{unit}</span>}
+      </p>
+    </div>
+  );
+}
+
+function MorePage({ currentUser, isAdmin, visibleNav, setView, darkMode, onToggleDarkMode, onLogout, unseenAnnouncements = 0 }) {
+  const byKey = new Map(visibleNav.map((n) => [n.key, n]));
+  const groups = MORE_GROUPS
+    .map((g) => ({ ...g, items: g.keys.map((k) => byKey.get(k)).filter(Boolean) }))
+    .filter((g) => g.items.length > 0);
+  return (
+    <div className="max-w-3xl mx-auto flex flex-col gap-6">
+      <div className="nm-card p-4 flex flex-col gap-4">
+        <div className="flex items-center gap-3">
+          <span className="nm-knob lg" style={{ boxShadow: "var(--nm-in-sm)" }}>
+            <span className="text-xl font-bold nm-ink">{(currentUser.name || "?").trim().charAt(0)}</span>
+          </span>
+          <div className="flex-1 min-w-0">
+            <p className="font-bold text-lg leading-tight truncate">{currentUser.name}</p>
+            <p className="text-xs nm-mut truncate">
+              {isAdmin ? "مدير النظام" : "بائع"}
+              {currentUser.isPrimaryAdmin ? " · الحساب الأساسي" : ""}
+              {currentUser.canManageStock && !currentUser.isPrimaryAdmin ? " · مسؤول المخزن" : ""}
+            </p>
+          </div>
+          <button onClick={onLogout} className="nm-knob danger" aria-label="تسجيل الخروج" title="تسجيل الخروج"><LogOut size={18} /></button>
         </div>
-      )}
-      <p className="text-[11px] text-[var(--muted)] mb-1.5 leading-snug line-clamp-2 pl-7">{label}</p>
-      <p dir="ltr" className="text-sm font-extrabold leading-tight whitespace-nowrap text-right" style={{ color }}>{value}</p>
-    </Card>
+        <button onClick={onToggleDarkMode} role="switch" aria-checked={darkMode} className="nm-well px-4 py-3 flex items-center gap-3 text-right">
+          {darkMode ? <Moon size={18} className="nm-ink" /> : <Sun size={18} className="nm-ink" />}
+          <span className="flex-1 text-sm font-semibold">الوضع الداكن</span>
+          <span className={`nm-switch ${darkMode ? "is-on" : ""}`} aria-hidden="true" />
+        </button>
+      </div>
+
+      {groups.map((g) => (
+        <section key={g.title} className="nm-card p-4 flex flex-col gap-4" aria-label={g.title}>
+          <div className="flex items-center justify-between">
+            <h3 className="font-bold text-[15px]">{g.title}</h3>
+            {g.adminOnly && <span className="nm-pill plain">للمدير</span>}
+          </div>
+          <div className="grid grid-cols-3 sm:grid-cols-4 gap-y-5 gap-x-2 justify-items-center">
+            {g.items.map((n) => {
+              const Icon = n.icon;
+              const badge = n.key === "announcements" ? unseenAnnouncements : 0;
+              return (
+                <button key={n.key} onClick={() => setView(n.key)} className="nm-act text-center">
+                  <span className="nm-knob lg">
+                    <Icon size={21} />
+                    {badge > 0 && <span className="nm-badge">{badge}</span>}
+                  </span>
+                  <span className="leading-tight max-w-[88px]">{MORE_SHORT[n.key] || n.label}</span>
+                  {n.primaryOnly && <span className="nm-pill plain !text-[9.5px] !px-2 !py-0.5">للأساسي</span>}
+                </button>
+              );
+            })}
+          </div>
+        </section>
+      ))}
+
+      {!isAdmin && <p className="text-center text-xs nm-mut">أقسام المالية والإدارة تظهر للمدير فقط</p>}
+    </div>
   );
 }
 
@@ -2886,6 +3071,7 @@ function NewSale({ products, users, currentUser, sales, seq, settings, sellerAll
   const [discountValue, setDiscountValue] = useState("");
   const [tileSize, setTileSizeState] = useState(() => window.localStorage.getItem("atourna_pos_tilesize") || "md");
   const [posSearch, setPosSearch] = useState("");
+  const totalsRef = useRef(null);
 
   const setTileSize = (size) => {
     setTileSizeState(size);
@@ -3066,7 +3252,7 @@ function NewSale({ products, users, currentUser, sales, seq, settings, sellerAll
         {isSellerRole && (
           <p className="text-[11px] text-[var(--muted)] flex items-start gap-1.5">
             <Boxes size={13} className="shrink-0 mt-0.5" />
-            بالنسبة للمنتجات التي تم توزيعها على البائعين، يُخصم البيع من مخزون {seller.name} الشخصي المخصص فقط. إذا نفدت حصته من منتج، يظهر عليه زر لطلب كمية من زميل — ولا تنتقل الكمية إليه إلا بعد موافقة صاحبها.
+            المنتجات الموزّعة تُخصم من حصة {seller.name}. إذا نفدت حصته من منتج، اضغطه لطلب كمية من زميل، ولا تنتقل إلا بعد موافقته.
           </p>
         )}
       </Card>
@@ -3099,13 +3285,15 @@ function NewSale({ products, users, currentUser, sales, seq, settings, sellerAll
       <Card className="p-4">
         <div className="flex items-center justify-between mb-3 gap-2">
           <h3 className="font-bold flex items-center gap-2 shrink-0"><Grid3x3 size={18} /> نقطة البيع السريعة</h3>
-          <div className="flex items-center gap-1 bg-[var(--surface-2)] rounded-lg p-1 shrink-0">
+          <div className="nm-tog !p-1 shrink-0" role="radiogroup" aria-label="حجم البطاقات">
             {[["sm", "صغير"], ["md", "متوسط"], ["lg", "كبير"]].map(([key, label]) => (
               <button
                 key={key}
                 onClick={() => setTileSize(key)}
                 title={label}
-                className={`px-2 py-1 rounded-md text-[10px] font-semibold transition ${tileSize === key ? "bg-[var(--accent)] text-white" : "text-[var(--muted)]"}`}
+                role="radio"
+                aria-checked={tileSize === key}
+                className={`!px-3 !py-1.5 !text-[11px] ${tileSize === key ? "is-on" : ""}`}
               >
                 {key === "sm" ? "S" : key === "md" ? "M" : "L"}
               </button>
@@ -3142,17 +3330,12 @@ function NewSale({ products, users, currentUser, sales, seq, settings, sellerAll
                       ? `المتبقي من مخصصك: ${ownLeft}`
                       : undefined
                   }
-                  className={`relative rounded-2xl border-2 flex flex-col items-center justify-center text-center transition ${tileBoxCls} ${
-                    disabled
-                      ? canRequest
-                        ? "opacity-80 border-[#C97B3D] border-dashed"
-                        : "opacity-40 grayscale border-[var(--border)]"
-                      : "border-[var(--border)] hover:border-[var(--accent)] hover:-translate-y-0.5 active:scale-95"
+                  className={`relative nm-tile flex flex-col items-center justify-center text-center ${tileBoxCls} ${
+                    disabled ? (canRequest ? "req" : "opacity-45 grayscale") : inCartQty > 0 ? "in-cart" : ""
                   }`}
-                  style={{ background: "var(--surface-2)" }}
                 >
                   {inCartQty > 0 && (
-                    <span className="absolute -top-1.5 -left-1.5 bg-[var(--accent)] text-white text-[10px] font-bold rounded-full w-5 h-5 flex items-center justify-center shadow fade-in">
+                    <span className="absolute -top-1.5 -left-1.5 text-white text-[11px] font-bold rounded-full w-6 h-6 flex items-center justify-center fade-in" style={{ background: "linear-gradient(145deg, var(--accent), var(--accent-dark))", boxShadow: "var(--nm-out-sm)" }}>
                       {inCartQty}
                     </span>
                   )}
@@ -3167,8 +3350,8 @@ function NewSale({ products, users, currentUser, sales, seq, settings, sellerAll
                     </span>
                   )}
                   <div
-                    className="rounded-full flex items-center justify-center mb-1 shrink-0"
-                    style={{ width: tileIconPx + 16, height: tileIconPx + 16, background: `color-mix(in srgb, ${tileColor} 20%, transparent)` }}
+                    className="rounded-full flex items-center justify-center mb-1.5 shrink-0 nm-in-sm"
+                    style={{ width: tileIconPx + 16, height: tileIconPx + 16 }}
                   >
                     <Droplet size={tileIconPx} style={{ color: tileColor }} />
                   </div>
@@ -3240,6 +3423,7 @@ function NewSale({ products, users, currentUser, sales, seq, settings, sellerAll
       </Card>
 
       {cart.length > 0 && (
+        <div ref={totalsRef} style={{ scrollMarginTop: 140 }}>
         <Card className="p-4 space-y-3">
           <div className="flex justify-between text-sm">
             <span className="text-[var(--muted)]">المجموع الفرعي</span>
@@ -3249,21 +3433,9 @@ function NewSale({ products, users, currentUser, sales, seq, settings, sellerAll
           <div className="pt-2 border-t border-[var(--border)]">
             <span className="block text-xs font-semibold text-[var(--muted)] mb-2 flex items-center gap-1.5"><Percent size={13} /> الخصم (اختياري)</span>
             <div className="flex gap-2">
-              <div className="flex rounded-xl overflow-hidden border border-[var(--border)]">
-                <button
-                  type="button"
-                  onClick={() => setDiscountType("amount")}
-                  className={`px-3 py-2 text-xs font-semibold ${discountType === "amount" ? "bg-[var(--accent)] text-white" : "bg-[var(--surface-2)] text-[var(--muted)]"}`}
-                >
-                  K.D
-                </button>
-                <button
-                  type="button"
-                  onClick={() => setDiscountType("percent")}
-                  className={`px-3 py-2 text-xs font-semibold ${discountType === "percent" ? "bg-[var(--accent)] text-white" : "bg-[var(--surface-2)] text-[var(--muted)]"}`}
-                >
-                  %
-                </button>
+              <div className="nm-tog !p-1 shrink-0" role="radiogroup" aria-label="نوع الخصم">
+                <button type="button" role="radio" aria-checked={discountType === "amount"} onClick={() => setDiscountType("amount")} className={`!px-3 ${discountType === "amount" ? "is-on" : ""}`}>د.ك</button>
+                <button type="button" role="radio" aria-checked={discountType === "percent"} onClick={() => setDiscountType("percent")} className={`!px-3 ${discountType === "percent" ? "is-on" : ""}`}>%</button>
               </div>
               <input
                 type="number"
@@ -3305,6 +3477,22 @@ function NewSale({ products, users, currentUser, sales, seq, settings, sellerAll
             <Receipt size={16} /> إصدار الفاتورة وحفظ عملية البيع
           </Btn>
         </Card>
+        </div>
+      )}
+
+      {cart.length > 0 && (
+        <div className="no-print fixed inset-x-0 z-30 px-4 flex justify-center" style={{ bottom: "calc(16px + env(safe-area-inset-bottom, 0px))" }}>
+          <div className="nm-out nm-pop rounded-full w-full max-w-2xl flex items-center gap-3 p-2 pr-4 fade-in">
+            <span className="nm-knob sm nm-ink" style={{ boxShadow: "var(--nm-in-sm)" }}><ShoppingCart size={16} /></span>
+            <div className="flex-1 min-w-0 leading-tight">
+              <p className="text-[11px] nm-mut">{cart.reduce((a, l) => a + l.qty, 0)} قطعة · {seller.name}</p>
+              <p className="nm-num font-bold text-[17px]">{fmt(total)}<span className="text-[10.5px] font-medium nm-mut ml-1">د.ك</span></p>
+            </div>
+            <button className="nm-btn solid !py-2.5 !px-5 text-sm" onClick={() => totalsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" })}>
+              الدفع والإصدار <ChevronLeft size={16} />
+            </button>
+          </div>
+        </div>
       )}
 
       {requestPanelProduct && (
@@ -3348,12 +3536,13 @@ function SalesRecords({ sales, users, currentUser, isAdmin, settings, onDelete, 
     <div className="space-y-4">
       <div className="flex items-center justify-between flex-wrap gap-2">
         <h2 className="text-xl font-bold">سجل المبيعات</h2>
-        <div className="flex gap-2">
-          <Btn variant="outline" onClick={() => onPrintRecord(sellerFilter === "all" ? "الكل" : sellerName, list)}>
+        <div className="flex gap-3">
+          <Btn variant="outline" className="!py-2 !px-4 text-[13px]" onClick={() => onPrintRecord(sellerFilter === "all" ? "الكل" : sellerName, list)}>
             <Printer size={16} /> طباعة السجل PDF
           </Btn>
           <Btn
             variant="ghost"
+            className="!py-2 !px-4 text-[13px]"
             onClick={() => {
               exportSalesExcel(sellerFilter === "all" ? "الكل" : sellerName, list, settings.companyName).catch((err) => {
                 console.error("Excel export failed:", err);
@@ -3366,7 +3555,13 @@ function SalesRecords({ sales, users, currentUser, isAdmin, settings, onDelete, 
         </div>
       </div>
 
-      <div className="flex flex-col sm:flex-row gap-2">
+      <div className="nm-well px-2 py-3 grid grid-cols-3 text-center" aria-label="ملخص السجل المعروض">
+        <div><p className="text-[10.5px] nm-mut">المحصّل</p><p className="nm-num font-bold nm-ink">{fmt(list.reduce((a, x) => a + x.collected, 0))}</p></div>
+        <div className="border-x border-[var(--border)]"><p className="text-[10.5px] nm-mut">المتبقي</p><p className="nm-num font-bold text-[var(--due)]">{fmt(list.reduce((a, x) => a + x.remaining, 0))}</p></div>
+        <div><p className="text-[10.5px] nm-mut">الفواتير</p><p className="nm-num font-bold">{list.length}</p></div>
+      </div>
+
+      <div className="flex flex-col sm:flex-row gap-3">
         <select className={inputCls + " sm:w-56"} value={sellerFilter} onChange={(e) => setSellerFilter(e.target.value)}>
           <option value="all">كل البائعين</option>
           {sellers.map(([id, name]) => (
@@ -3387,41 +3582,48 @@ function SalesRecords({ sales, users, currentUser, isAdmin, settings, onDelete, 
           <div className="space-y-3 md:hidden">
             {list.map((s) => (
               <Card key={s.id} className="p-4">
-                <div className="flex justify-between items-start mb-2">
-                  <div>
-                    <p className="font-bold">{s.invoiceNo}{(s.editHistory || []).length > 0 && <span title={`عُدّلت ${s.editHistory.length} مرة — آخر تعديل: ${s.editHistory[s.editHistory.length - 1].byUserName}`} className="mr-1.5 text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-[#FFF6E5] text-[#C97B3D] align-middle">مُعدّلة</span>}</p>
-                    <p className="text-xs text-[var(--muted)]">{s.sellerName} · {dateLabel(s.date)} {timeLabel(s.date)}</p>
+                <div className="flex justify-between items-start gap-3 mb-2">
+                  <div className="min-w-0">
+                    <p className="font-bold flex items-center gap-1.5 flex-wrap">
+                      {s.invoiceNo}
+                      {(s.editHistory || []).length > 0 && <span title={`عُدّلت ${s.editHistory.length} مرة — آخر تعديل: ${s.editHistory[s.editHistory.length - 1].byUserName}`} className="nm-pill info !text-[9.5px] !py-0.5">مُعدّلة</span>}
+                    </p>
+                    <p className="text-xs nm-mut">{s.sellerName} · {dateLabel(s.date)} {timeLabel(s.date)}</p>
                   </div>
-                  <p className="font-extrabold text-[var(--accent)]">{fmt(s.total)} K.D</p>
+                  {s.remaining > 0 ? <span className="nm-pill due shrink-0">متبقٍ</span> : <span className="nm-pill ok shrink-0">مسدّدة</span>}
                 </div>
-                <div className="text-xs text-[var(--muted)] mb-2">{s.items.map((i) => i.name).join("، ")}</div>
-                <div className="flex justify-between text-xs mb-3">
-                  <span className="text-[#3F7D57] font-semibold">محصل: {fmt(s.collected)}</span>
-                  <span className="text-[#B23A3A] font-semibold">متبقي: {fmt(s.remaining)}</span>
+                <div className="text-xs nm-mut mb-2 truncate">{s.items.map((i) => i.name).join("، ")}</div>
+                <div className="flex items-end justify-between gap-3 mb-4">
+                  <p className="nm-num text-[22px] font-bold leading-none">{fmt(s.total)}<span className="text-[11px] font-medium nm-mut ml-1">د.ك</span></p>
+                  <div className="text-[11px] text-left leading-relaxed">
+                    <p className="text-[var(--ok)] font-semibold">محصّل <span className="nm-num">{fmt(s.collected)}</span></p>
+                    {s.remaining > 0 && <p className="text-[var(--due)] font-semibold">متبقٍ <span className="nm-num">{fmt(s.remaining)}</span></p>}
+                  </div>
                 </div>
-                <div className="flex gap-2 flex-wrap">
-                  <Btn variant="ghost" className="flex-1 py-2 text-xs" onClick={() => onPrintInvoice(s)}>
-                    <Printer size={14} /> طباعة الفاتورة
-                  </Btn>
+                <div className="flex justify-between gap-1 pt-3 border-t border-[var(--border)]">
+                  <button className="nm-act" onClick={() => onPrintInvoice(s)}>
+                    <span className="nm-knob"><Printer size={17} /></span>طباعة
+                  </button>
                   {s.remaining > 0 && (
-                    <Btn variant="dark" className="flex-1 py-2 text-xs" onClick={() => { setPayingId(s.id); }}>
-                      <Wallet size={14} /> تسجيل تحصيل
-                    </Btn>
+                    <button className="nm-act" onClick={() => setPayingId(payingId === s.id ? null : s.id)}>
+                      <span className={`nm-knob nm-ink ${payingId === s.id ? "is-on" : ""}`}><Wallet size={17} /></span>تحصيل
+                    </button>
                   )}
-                  <button
-                    onClick={() => setCommentingId(commentingId === s.id ? null : s.id)}
-                    className="p-2.5 rounded-xl bg-[var(--surface-3)] text-[var(--accent-dark)] relative"
-                  >
-                    <MessageSquare size={16} />
-                    {(s.comments || []).length > 0 && (
-                      <span className="absolute -top-1 -left-1 bg-[#B23A3A] text-white text-[9px] rounded-full w-4 h-4 flex items-center justify-center">{s.comments.length}</span>
-                    )}
+                  <button className="nm-act" onClick={() => setCommentingId(commentingId === s.id ? null : s.id)}>
+                    <span className={`nm-knob ${commentingId === s.id ? "is-on" : ""}`}>
+                      <MessageSquare size={17} />
+                      {(s.comments || []).length > 0 && <span className="nm-badge">{s.comments.length}</span>}
+                    </span>ملاحظات
                   </button>
                   {(isAdmin || s.sellerId === currentUser.id) && (
-                    <button onClick={() => onEditSale(s)} title={isAdmin ? "تعديل" : "تصحيح بيانات فاتورتك"} className="p-2.5 rounded-xl bg-[var(--surface-3)] text-[var(--accent-dark)]"><Pencil size={16} /></button>
+                    <button className="nm-act" onClick={() => onEditSale(s)} title={isAdmin ? "تعديل" : "تصحيح بيانات فاتورتك"}>
+                      <span className="nm-knob"><Pencil size={17} /></span>{isAdmin ? "تعديل" : "تصحيح"}
+                    </button>
                   )}
                   {isAdmin && (
-                    <button onClick={() => onConfirm(`هل تريد حذف الفاتورة ${s.invoiceNo}؟ سيتم إرجاع كمية المنتجات إلى المخزون تلقائياً. لا يمكن التراجع عن هذا الإجراء.`, () => onDelete(s.id))} className="p-2.5 rounded-xl bg-[#FBEAEA] text-[#B23A3A]"><Trash2 size={16} /></button>
+                    <button className="nm-act" onClick={() => onConfirm(`هل تريد حذف الفاتورة ${s.invoiceNo}؟ سيتم إرجاع كمية المنتجات إلى المخزون تلقائياً. لا يمكن التراجع عن هذا الإجراء.`, () => onDelete(s.id))}>
+                      <span className="nm-knob danger"><Trash2 size={17} /></span>حذف
+                    </button>
                   )}
                 </div>
                 {payingId === s.id && (
@@ -3731,8 +3933,9 @@ function Inventory({ products, isAdmin, onSave, onPrintLabels, stockLogs, onLogA
   const [search, setSearch] = useState("");
   const [sortBy, setSortBy] = useState("name"); // name | stockAsc
   const [logFilter, setLogFilter] = useState("all");
+  const [showForm, setShowForm] = useState(false);
 
-  const resetForm = () => { setForm({ name: "", price: "", cost: "", stock: "", minStock: "5" }); setEditingId(null); };
+  const resetForm = () => { setForm({ name: "", price: "", cost: "", stock: "", minStock: "5" }); setEditingId(null); setShowForm(false); };
 
   const submit = () => {
     if (!form.name || form.price === "" || form.stock === "") return;
@@ -3744,7 +3947,8 @@ function Inventory({ products, isAdmin, onSave, onPrintLabels, stockLogs, onLogA
     resetForm();
   };
 
-  const startEdit = (p) => { setForm({ name: p.name, price: String(p.price), cost: String(p.cost || 0), stock: String(p.stock), minStock: String(p.minStock ?? 5) }); setEditingId(p.id); setExpandedId(null); };
+  const startEdit = (p) => { setForm({ name: p.name, price: String(p.price), cost: String(p.cost || 0), stock: String(p.stock), minStock: String(p.minStock ?? 5) }); setEditingId(p.id); setShowForm(true); setExpandedId(null); window.scrollTo({ top: 0, behavior: "smooth" }); };
+  const maxStock = Math.max(1, ...products.map((p) => p.stock));
 
   const submitAdjustment = (product) => {
     const q = Number(adjustQty);
@@ -3782,7 +3986,12 @@ function Inventory({ products, isAdmin, onSave, onPrintLabels, stockLogs, onLogA
 
   return (
     <div className="space-y-5">
-      <h2 className="text-xl font-bold">المخزون والمنتجات</h2>
+      <div className="flex items-center justify-between gap-3">
+        <h2 className="text-xl font-bold">المخزون والمنتجات</h2>
+        {isAdmin && !showForm && !editingId && (
+          <Btn variant="ghost" className="!py-2 !px-4 text-[13px]" onClick={() => setShowForm(true)}><Plus size={16} /> منتج جديد</Btn>
+        )}
+      </div>
 
       {/* Summary */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
@@ -3792,8 +4001,8 @@ function Inventory({ products, isAdmin, onSave, onPrintLabels, stockLogs, onLogA
         {isAdmin && <StatCard label="قيمة البيع" value={fmt(inventoryValueRetail) + " K.D"} color="#3F7D57" icon={TrendingUp} themeKey={activeTheme} slot={3} />}
       </div>
 
-      {isAdmin && (
-        <Card className="p-4">
+      {isAdmin && (showForm || editingId) && (
+        <Card className="p-4 fade-in">
           <h3 className="font-bold mb-3">{editingId ? "تعديل منتج" : "إضافة منتج جديد"}</h3>
           <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
             <div className="col-span-2 md:col-span-1">
@@ -3806,7 +4015,7 @@ function Inventory({ products, isAdmin, onSave, onPrintLabels, stockLogs, onLogA
           </div>
           <div className="flex gap-2 mt-3">
             <Btn onClick={submit}><Plus size={16} /> {editingId ? "حفظ التعديل" : "إضافة المنتج"}</Btn>
-            {editingId && <Btn variant="outline" onClick={resetForm}>إلغاء</Btn>}
+            <Btn variant="outline" onClick={resetForm}>إلغاء</Btn>
           </div>
         </Card>
       )}
@@ -3846,6 +4055,9 @@ function Inventory({ products, isAdmin, onSave, onPrintLabels, stockLogs, onLogA
                     الكمية المتبقية: {p.stock}
                   </p>
                   {p.stock <= (p.minStock ?? 5) && <AlertTriangle size={16} className="text-[#B23A3A]" />}
+                </div>
+                <div className="nm-groove mt-2" aria-hidden="true">
+                  <span style={{ width: `${Math.max(p.stock > 0 ? 4 : 0, (p.stock / maxStock) * 100)}%`, ...(p.stock <= (p.minStock ?? 5) ? { background: "linear-gradient(270deg, #D08A5A, #A8612E)" } : {}) }} />
                 </div>
 
                 <button
@@ -4686,14 +4898,14 @@ function AnnouncementsPage({ announcements, isAdmin, onCreate, onDelete, onConfi
 /* ---------------------------------- Shared theme palette ---------------------------------- */
 
 const THEMES = [
-  { key: "classic", label: "التصميم الأصلي", accent: "#B8894A", dark: "#5B2333" },
-  { key: "emerald", label: "زمردي", accent: "#2F8F6B", dark: "#124430" },
-  { key: "rose", label: "وردي", accent: "#C2547E", dark: "#6B1F3A" },
-  { key: "sapphire", label: "سماوي", accent: "#3B6EA8", dark: "#16324F" },
-  { key: "violet", label: "بنفسجي", accent: "#7B5EA8", dark: "#3E2A5C" },
-  { key: "amber", label: "كهرماني", accent: "#C97B3D", dark: "#7A3E1D" },
-  { key: "gem", label: "الجواهر الذهبي", accent: "#C9A227", dark: "#4A2C1D", vivid: true },
-  { key: "candy", label: "حيوي وملوّن", accent: "#12A594", dark: "#0B6B60", vivid: true },
+  { key: "classic", label: "الفيروزي (الأساسي)", accent: "#2F7F86", dark: "#1C5A60" },
+  { key: "emerald", label: "زمردي", accent: "#2F8F6B", dark: "#1B5E45" },
+  { key: "rose", label: "وردي", accent: "#B24A6A", dark: "#7A2E47" },
+  { key: "sapphire", label: "سماوي", accent: "#3B6EA8", dark: "#244A75" },
+  { key: "violet", label: "بنفسجي", accent: "#6E55A0", dark: "#46356B" },
+  { key: "amber", label: "كهرماني", accent: "#B06A2E", dark: "#7A461C" },
+  { key: "gem", label: "ذهبي", accent: "#A8842A", dark: "#6E5518", vivid: true },
+  { key: "candy", label: "أخضر حيوي", accent: "#12A594", dark: "#0B6B60", vivid: true },
   { key: "pastel", label: "باستيل هادئ", accent: "#5BADA6", dark: "#2E6B65", vivid: true },
 ];
 
