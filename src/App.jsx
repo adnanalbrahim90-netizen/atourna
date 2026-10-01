@@ -1097,6 +1097,7 @@ export default function App() {
   const [settings, setSettings] = useState({ companyName: "عطورنا للعطور والبخور", logo: "", phone: "", address: "", theme: "classic", cardStyle: "classic", taxEnabled: false, taxRate: 5, taxLabel: "ضريبة القيمة المضافة" });
   const [currentUser, setCurrentUser] = useState(null);
   const [view, setView] = useState("dashboard");
+  const [recordsFilter, setRecordsFilter] = useState("all"); // all | unpaid | paid
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
   const [printPayload, setPrintPayload] = useState(null); // {type:'invoice'|'record', data}
@@ -1988,6 +1989,7 @@ export default function App() {
               </p>
             </div>
             <NotificationsBell
+              onOpenUnpaid={() => { setRecordsFilter("unpaid"); setView("records"); }}
               open={notifOpen}
               setOpen={setNotifOpen}
               announcements={announcements}
@@ -2054,7 +2056,7 @@ export default function App() {
         )}
         <div key={view} className="view-transition">
           {view === "dashboard" && (
-            <Dashboard sales={sales} products={products} users={users} sellerGoals={sellerGoals} currentUser={currentUser} setView={setView} activeTheme={activeTheme} />
+            <Dashboard sales={sales} products={products} users={users} sellerGoals={sellerGoals} currentUser={currentUser} setView={setView} activeTheme={activeTheme} sellerAllocations={sellerAllocations} onOpenUnpaid={() => { setRecordsFilter("unpaid"); setView("records"); }} />
           )}
           {view === "more" && (
             <MorePage
@@ -2114,6 +2116,8 @@ export default function App() {
           )}
           {view === "records" && (
             <SalesRecords
+              statusFilter={recordsFilter}
+              onStatusFilter={setRecordsFilter}
               sales={sales}
               users={users}
               currentUser={currentUser}
@@ -2400,7 +2404,7 @@ function NavBtn({ item, active, onClick }) {
 
 /* ---------------------------------- Notifications Bell ---------------------------------- */
 
-function NotificationsBell({ open, setOpen, announcements, currentUser, products, sales, isAdmin, setView, onOpenAnnouncement, stockRequests = [], onRespondRequest, notifPermission, pushActive, pushReason, onRetryPush, onTestPush, onEnableNotifications }) {
+function NotificationsBell({ onOpenUnpaid, open, setOpen, announcements, currentUser, products, sales, isAdmin, setView, onOpenAnnouncement, stockRequests = [], onRespondRequest, notifPermission, pushActive, pushReason, onRetryPush, onTestPush, onEnableNotifications }) {
   const panelRef = useRef(null);
   const [respondingId, setRespondingId] = useState(null); // guards against double-clicking approve/reject
 
@@ -2553,7 +2557,7 @@ function NotificationsBell({ open, setOpen, announcements, currentUser, products
 
                 {isAdmin && totalRemaining > 0 && (
                   <button
-                    onClick={() => { setView("records"); setOpen(false); }}
+                    onClick={() => { onOpenUnpaid ? onOpenUnpaid() : setView("records"); setOpen(false); }}
                     className="w-full text-right px-4 py-3 hover:bg-[var(--surface-2)] flex items-start gap-2.5"
                   >
                     <Wallet size={15} className="text-[#B23A3A] shrink-0 mt-0.5" />
@@ -2806,6 +2810,35 @@ function GlobalStyle() {
 
 /* ---------------------------------- Dashboard ---------------------------------- */
 
+// How a seller is doing against the stock personally allocated to them.
+// Target = what their share is worth: the real value of the units they already
+// sold from it + the remaining units at today's price. Units that left the
+// share without a sale (gifts, damage, transfers to a colleague) are therefore
+// excluded automatically, and the target shrinks/grows as the share changes.
+// Progress = money actually collected on those sold units, so the dial only
+// reaches 100% when the share is empty AND every invoice drawing on it is paid.
+function shareProgressFor(sales, allocations, products, sellerId) {
+  const mine = (allocations || []).filter((a) => a.sellerId === sellerId);
+  if (mine.length === 0) return null;
+  const priceOf = (pid) => products.find((p) => p.id === pid)?.price || 0;
+  let soldValue = 0, collected = 0, soldUnits = 0;
+  sales.forEach((s) => {
+    const srcs = (s.allocationSources || []).filter((x) => x.sellerId === sellerId);
+    if (srcs.length === 0) return;
+    const pids = new Set(srcs.map((x) => x.productId));
+    const lineValue = (s.items || []).filter((i) => pids.has(i.productId)).reduce((a, i) => a + (i.total ?? i.qty * i.price), 0);
+    const factor = s.subtotal > 0 ? s.total / s.subtotal : 1; // spread discount/tax over the lines
+    const value = lineValue * factor;
+    soldValue += value;
+    collected += s.total > 0 ? value * (s.collected / s.total) : 0;
+    soldUnits += srcs.reduce((a, x) => a + x.qty, 0);
+  });
+  const remainingUnits = mine.reduce((a, x) => a + Math.max(0, x.remaining), 0);
+  const remainingValue = mine.reduce((a, x) => a + Math.max(0, x.remaining) * priceOf(x.productId), 0);
+  const target = soldValue + remainingValue;
+  return { target, collected, soldValue, due: Math.max(0, soldValue - collected), soldUnits, remainingUnits, remainingValue, pct: target > 0 ? Math.min(100, (collected / target) * 100) : 0 };
+}
+
 function SoftDial({ value, pct, label, caption, size = 196 }) {
   const r = 71;
   const c = 2 * Math.PI * r;
@@ -2826,7 +2859,7 @@ function SoftDial({ value, pct, label, caption, size = 196 }) {
   );
 }
 
-function Dashboard({ sales, products, users, sellerGoals, currentUser, setView, activeTheme }) {
+function Dashboard({ sales, products, users, sellerGoals, currentUser, setView, activeTheme, sellerAllocations = [], onOpenUnpaid }) {
   const isAdmin = currentUser.role === "admin";
   const mySales = sales; // everyone can see overall store sales now
   const totalRevenue = mySales.reduce((a, s) => a + s.total, 0);
@@ -2857,6 +2890,7 @@ function Dashboard({ sales, products, users, sellerGoals, currentUser, setView, 
   const greeting = hour < 12 ? "صباح الخير" : "مساء الخير";
   const monthName = new Date().toLocaleDateString("ar", { month: "long" });
   const canManage = canManageAllocations(currentUser);
+  const share = useMemo(() => shareProgressFor(sales, sellerAllocations, products, currentUser.id), [sales, sellerAllocations, products, currentUser.id]);
   const medalColor = monthRank.rank === 1 ? "#A8842A" : monthRank.rank === 2 ? "#7C8794" : monthRank.rank === 3 ? "#9A6420" : "var(--accent-ink)";
 
   const actions = [
@@ -2874,12 +2908,45 @@ function Dashboard({ sales, products, users, sellerGoals, currentUser, setView, 
       </div>
 
       <div className="grid md:grid-cols-2 gap-6 items-center">
-        <SoftDial
-          value={fmt(monthRank.collected)}
-          pct={dialPct}
-          label={`محصّلي في ${monthName}`}
-          caption={myGoal > 0 ? `${goalProgress.toFixed(0)}٪ من هدف ${fmt(myGoal).replace(/\.000$/, "")}` : `الترتيب ${monthRank.rank || "-"} من ${monthRank.total}`}
-        />
+        <div className="flex flex-col items-center gap-4">
+          {share ? (
+            <SoftDial
+              value={fmt(share.collected)}
+              pct={share.pct}
+              label="محصّل من حصتي"
+              caption={`${share.pct.toFixed(0)}٪ من ${fmt(share.target).replace(/\.000$/, "")} د.ك`}
+            />
+          ) : (
+            <SoftDial
+              value={fmt(monthRank.collected)}
+              pct={dialPct}
+              label={`محصّلي في ${monthName}`}
+              caption={myGoal > 0 ? `${goalProgress.toFixed(0)}٪ من هدف ${fmt(myGoal).replace(/\.000$/, "")}` : `الترتيب ${monthRank.rank || "-"} من ${monthRank.total}`}
+            />
+          )}
+          {share && (
+            <div className="nm-well w-full max-w-sm grid grid-cols-3 text-center py-3 px-2" aria-label="تفاصيل حصتي">
+              <button onClick={() => setView("allocations")} className="min-w-0">
+                <p className="text-[10.5px] nm-mut">باقي في حصتي</p>
+                <p className="nm-num font-bold text-sm">{share.remainingUnits} <span className="text-[10px] nm-mut font-medium">قطعة</span></p>
+                <p className="nm-num text-[10.5px] nm-mut">{fmt(share.remainingValue)}</p>
+              </button>
+              <div className="border-x border-[var(--border)] min-w-0">
+                <p className="text-[10.5px] nm-mut">بِعت منها</p>
+                <p className="nm-num font-bold text-sm">{share.soldUnits} <span className="text-[10px] nm-mut font-medium">قطعة</span></p>
+                <p className="nm-num text-[10.5px] nm-mut">{fmt(share.soldValue)}</p>
+              </div>
+              <button onClick={onOpenUnpaid} className="min-w-0" disabled={share.due <= 0}>
+                <p className="text-[10.5px] nm-mut">بانتظار التحصيل</p>
+                <p className={`nm-num font-bold text-sm ${share.due > 0 ? "text-[var(--due)]" : "text-[var(--ok)]"}`}>{fmt(share.due)}</p>
+                <p className="text-[10.5px] nm-mut">{share.due > 0 ? "اضغط للعرض" : "لا شيء"}</p>
+              </button>
+            </div>
+          )}
+          {share && share.remainingUnits === 0 && share.due <= 0 && share.target > 0 && (
+            <p className="text-xs font-semibold text-[var(--ok)]">أحسنت! بعت حصتك كاملة وحصّلت قيمتها</p>
+          )}
+        </div>
         <div className="grid grid-cols-4 gap-2 justify-items-center">
           {actions.map((a) => {
             const Icon = a.icon;
@@ -2902,7 +2969,9 @@ function Dashboard({ sales, products, users, sellerGoals, currentUser, setView, 
           <StatCard label="عدد الفواتير" value={mySales.length} icon={Receipt} />
           <StatCard label="إجمالي المبيعات" value={fmt(totalRevenue)} unit="د.ك" icon={TrendingUp} />
           <StatCard label="المحصّل" value={fmt(totalCollected)} unit="د.ك" icon={Wallet} tone="ink" />
-          <StatCard label="المتبقي" value={fmt(totalRemaining)} unit="د.ك" icon={AlertTriangle} tone={totalRemaining > 0 ? "due" : undefined} />
+          <button onClick={onOpenUnpaid} className="text-right" aria-label="عرض الفواتير غير المحصّلة">
+            <StatCard label="المتبقي · غير محصّل" value={fmt(totalRemaining)} unit="د.ك" icon={AlertTriangle} tone={totalRemaining > 0 ? "due" : undefined} />
+          </button>
         </div>
       </section>
 
@@ -3511,7 +3580,7 @@ function NewSale({ products, users, currentUser, sales, seq, settings, sellerAll
 
 /* ---------------------------------- Sales Records ---------------------------------- */
 
-function SalesRecords({ sales, users, currentUser, isAdmin, settings, onDelete, onPrintInvoice, onPrintRecord, onCollectPayment, onEditSale, onAddComment, onDeleteComment, onConfirm }) {
+function SalesRecords({ sales, users, currentUser, isAdmin, settings, onDelete, onPrintInvoice, onPrintRecord, onCollectPayment, onEditSale, onAddComment, onDeleteComment, onConfirm, statusFilter = "all", onStatusFilter = () => {} }) {
   const [sellerFilter, setSellerFilter] = useState("all");
   const [search, setSearch] = useState("");
   const [payingId, setPayingId] = useState(null);
@@ -3529,6 +3598,15 @@ function SalesRecords({ sales, users, currentUser, isAdmin, settings, onDelete, 
     const q = search.trim().toLowerCase();
     list = list.filter((s) => s.invoiceNo.toLowerCase().includes(q) || s.sellerName.toLowerCase().includes(q));
   }
+  // Unpaid counts follow the seller/search filters so the chip numbers always
+  // match what you'd see after tapping them.
+  const unpaidAll = list.filter((s) => s.remaining > 0.0005);
+  const unpaidTotal = unpaidAll.reduce((a, s) => a + s.remaining, 0);
+  const paidCount = list.length - unpaidAll.length;
+  if (statusFilter === "unpaid") list = [...unpaidAll].sort((a, b) => new Date(a.date) - new Date(b.date)); // oldest debt first
+  else if (statusFilter === "paid") list = list.filter((s) => s.remaining <= 0.0005);
+  const daysOpen = (d) => Math.max(0, Math.floor((Date.now() - new Date(d).getTime()) / 86400000));
+  const ageLabel = (d) => { const n = daysOpen(d); return n === 0 ? "اليوم" : n === 1 ? "منذ يوم" : n === 2 ? "منذ يومين" : n <= 10 ? `منذ ${n} أيام` : `منذ ${n} يوماً`; };
 
   const sellerName = sellerFilter !== "all" ? sellers.find(([id]) => id === sellerFilter)?.[1] : currentUser.name;
 
@@ -3555,6 +3633,39 @@ function SalesRecords({ sales, users, currentUser, isAdmin, settings, onDelete, 
         </div>
       </div>
 
+      <div className="nm-tog" role="tablist" aria-label="حالة التحصيل">
+        <button role="tab" aria-selected={statusFilter === "all"} className={statusFilter === "all" ? "is-on" : ""} onClick={() => onStatusFilter("all")}>الكل</button>
+        <button role="tab" aria-selected={statusFilter === "unpaid"} className={statusFilter === "unpaid" ? "is-on" : ""} onClick={() => onStatusFilter("unpaid")} style={statusFilter === "unpaid" ? { color: "var(--due)" } : undefined}>
+          غير محصّلة
+          {unpaidAll.length > 0 && <span className="nm-num text-[10.5px] font-bold text-white rounded-full px-1.5 min-w-[20px] h-5 inline-flex items-center justify-center" style={{ background: "var(--due)" }}>{unpaidAll.length}</span>}
+        </button>
+        <button role="tab" aria-selected={statusFilter === "paid"} className={statusFilter === "paid" ? "is-on" : ""} onClick={() => onStatusFilter("paid")}>مسدّدة <span className="nm-num text-[11px] nm-mut">{paidCount}</span></button>
+      </div>
+
+      {unpaidAll.length > 0 && statusFilter !== "unpaid" && (
+        <button onClick={() => onStatusFilter("unpaid")} className="nm-card w-full p-4 flex items-center gap-3 text-right" style={{ boxShadow: "var(--nm-out), inset 4px 0 0 var(--due)" }}>
+          <span className="nm-knob" style={{ color: "var(--due)", boxShadow: "var(--nm-in-sm)" }}><AlertTriangle size={18} /></span>
+          <span className="flex-1 min-w-0">
+            <span className="block font-bold text-sm">{unpaidAll.length} {unpaidAll.length === 1 ? "فاتورة غير محصّلة" : unpaidAll.length === 2 ? "فاتورتان غير محصّلتين" : "فواتير غير محصّلة بالكامل"}</span>
+            <span className="block text-xs nm-mut">أقدمها {ageLabel(unpaidAll.reduce((o, x) => (new Date(x.date) < new Date(o.date) ? x : o)).date)} · اضغط لعرضها</span>
+          </span>
+          <span className="text-left">
+            <span className="block nm-num font-bold text-[var(--due)]">{fmt(unpaidTotal)}</span>
+            <span className="block text-[10px] nm-mut">د.ك مستحقة</span>
+          </span>
+        </button>
+      )}
+
+      {statusFilter === "unpaid" && (
+        <div className="nm-well px-4 py-3 flex items-center justify-between gap-3" role="status">
+          <div>
+            <p className="text-xs nm-mut">إجمالي المستحق على العملاء</p>
+            <p className="nm-num text-xl font-bold text-[var(--due)]">{fmt(unpaidTotal)} <span className="text-xs nm-mut font-medium">د.ك</span></p>
+          </div>
+          <p className="text-[11px] nm-mut text-left leading-relaxed">{unpaidAll.length} فاتورة<br />مرتّبة من الأقدم</p>
+        </div>
+      )}
+
       <div className="nm-well px-2 py-3 grid grid-cols-3 text-center" aria-label="ملخص السجل المعروض">
         <div><p className="text-[10.5px] nm-mut">المحصّل</p><p className="nm-num font-bold nm-ink">{fmt(list.reduce((a, x) => a + x.collected, 0))}</p></div>
         <div className="border-x border-[var(--border)]"><p className="text-[10.5px] nm-mut">المتبقي</p><p className="nm-num font-bold text-[var(--due)]">{fmt(list.reduce((a, x) => a + x.remaining, 0))}</p></div>
@@ -3575,7 +3686,7 @@ function SalesRecords({ sales, users, currentUser, isAdmin, settings, onDelete, 
       </div>
 
       {list.length === 0 ? (
-        <Card className="p-8"><EmptyState text="لا توجد سجلات مطابقة" /></Card>
+        <Card className="p-8"><EmptyState text={statusFilter === "unpaid" ? "ممتاز! لا توجد فواتير غير محصّلة" : "لا توجد سجلات مطابقة"} /></Card>
       ) : (
         <>
           {/* Mobile cards */}
@@ -3590,7 +3701,12 @@ function SalesRecords({ sales, users, currentUser, isAdmin, settings, onDelete, 
                     </p>
                     <p className="text-xs nm-mut">{s.sellerName} · {dateLabel(s.date)} {timeLabel(s.date)}</p>
                   </div>
-                  {s.remaining > 0 ? <span className="nm-pill due shrink-0">متبقٍ</span> : <span className="nm-pill ok shrink-0">مسدّدة</span>}
+                  {s.remaining > 0 ? (
+                    <span className="flex flex-col items-end gap-1 shrink-0">
+                      <span className="nm-pill due">{s.collected > 0 ? "محصّلة جزئياً" : "غير محصّلة"}</span>
+                      <span className={`text-[10px] font-semibold ${daysOpen(s.date) > 14 ? "text-[var(--bad)]" : "nm-mut"}`}>{ageLabel(s.date)}</span>
+                    </span>
+                  ) : <span className="nm-pill ok shrink-0">مسدّدة</span>}
                 </div>
                 <div className="text-xs nm-mut mb-2 truncate">{s.items.map((i) => i.name).join("، ")}</div>
                 <div className="flex items-end justify-between gap-3 mb-4">
@@ -3670,7 +3786,11 @@ function SalesRecords({ sales, users, currentUser, isAdmin, settings, onDelete, 
                       <td className="px-4 py-3 text-[var(--muted)] max-w-[220px] truncate">{s.items.map((i) => i.name).join("، ")}</td>
                       <td className="px-4 py-3 font-bold text-[var(--accent)]">{fmt(s.total)}</td>
                       <td className="px-4 py-3 text-[#3F7D57] font-semibold">{fmt(s.collected)}</td>
-                      <td className="px-4 py-3 text-[#B23A3A] font-semibold">{fmt(s.remaining)}</td>
+                      <td className="px-4 py-3 font-semibold">
+                        {s.remaining > 0 ? (
+                          <span className="flex flex-col items-start gap-0.5"><span className="text-[var(--due)]">{fmt(s.remaining)}</span><span className={`text-[10px] ${daysOpen(s.date) > 14 ? "text-[var(--bad)]" : "nm-mut"}`}>{ageLabel(s.date)}</span></span>
+                        ) : <span className="nm-pill ok">مسدّدة</span>}
+                      </td>
                       <td className="px-4 py-3">
                         <div className="flex items-center gap-2">
                           <button onClick={() => onPrintInvoice(s)} className="p-1.5 rounded-lg text-[var(--accent-dark)] hover:bg-[var(--surface-3)]" title="طباعة"><Printer size={16} /></button>
