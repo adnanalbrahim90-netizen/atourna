@@ -1098,6 +1098,7 @@ export default function App() {
   const [currentUser, setCurrentUser] = useState(null);
   const [view, setView] = useState("dashboard");
   const [recordsFilter, setRecordsFilter] = useState("all"); // all | unpaid | paid
+  const [stockTab, setStockTab] = useState("products"); // products | log (inside the inventory view)
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
   const [notifOpen, setNotifOpen] = useState(false);
   const [printPayload, setPrintPayload] = useState(null); // {type:'invoice'|'record', data}
@@ -2035,12 +2036,15 @@ export default function App() {
           />
         )}
         {tabOfView(view) === "stock" && (
-          <div className="nm-tog max-w-md mx-auto mb-5" role="tablist" aria-label="أقسام المخزن">
-            <button role="tab" aria-selected={view === "inventory"} className={view === "inventory" ? "is-on" : ""} onClick={() => setView("inventory")}>
+          <div className="nm-tog max-w-xl mx-auto mb-5" role="tablist" aria-label="أقسام المخزن">
+            <button role="tab" aria-selected={view === "inventory" && stockTab === "products"} className={view === "inventory" && stockTab === "products" ? "is-on" : ""} onClick={() => { setStockTab("products"); setView("inventory"); }}>
               <Package size={15} /> المنتجات
             </button>
             <button role="tab" aria-selected={view === "allocations"} className={view === "allocations" ? "is-on" : ""} onClick={() => setView("allocations")}>
-              <Boxes size={15} /> {canManageAllocations(currentUser) ? "التوزيع" : "مخزوني المخصص"}
+              <Boxes size={15} /> {canManageAllocations(currentUser) ? "التوزيع" : "حصتي"}
+            </button>
+            <button role="tab" aria-selected={view === "inventory" && stockTab === "log"} className={view === "inventory" && stockTab === "log" ? "is-on" : ""} onClick={() => { setStockTab("log"); setView("inventory"); }}>
+              <Gift size={15} /> الهدايا والتالف
             </button>
           </div>
         )}
@@ -2193,6 +2197,9 @@ export default function App() {
               onDeleteLog={deleteStockLog}
               onConfirm={askConfirm}
               activeTheme={activeTheme}
+              sellerAllocations={sellerAllocations}
+              tab={stockTab}
+              currentUserId={currentUser.id}
             />
           )}
           {view === "allocations" && (
@@ -4041,7 +4048,7 @@ function Stats({ sales, users, products, currentUser, isAdmin, activeTheme }) {
 
 /* ---------------------------------- Inventory ---------------------------------- */
 
-function Inventory({ products, isAdmin, onSave, onPrintLabels, stockLogs, onLogAdjustment, onDeleteLog, onConfirm, activeTheme }) {
+function Inventory({ products, isAdmin, onSave, onPrintLabels, stockLogs, onLogAdjustment, onDeleteLog, onConfirm, activeTheme, sellerAllocations = [], tab = "products", currentUserId }) {
   const [form, setForm] = useState({ name: "", price: "", cost: "", stock: "", minStock: "5" });
   const [editingId, setEditingId] = useState(null);
   const [labelQty, setLabelQty] = useState({});
@@ -4054,6 +4061,8 @@ function Inventory({ products, isAdmin, onSave, onPrintLabels, stockLogs, onLogA
   const [sortBy, setSortBy] = useState("name"); // name | stockAsc
   const [logFilter, setLogFilter] = useState("all");
   const [showForm, setShowForm] = useState(false);
+  const [stockFilter, setStockFilter] = useState("all"); // all | low | out
+  const [panel, setPanel] = useState(null); // { id, kind: "adjust" | "labels" } — the action panel open inside a card
 
   const resetForm = () => { setForm({ name: "", price: "", cost: "", stock: "", minStock: "5" }); setEditingId(null); setShowForm(false); };
 
@@ -4104,22 +4113,89 @@ function Inventory({ products, isAdmin, onSave, onPrintLabels, stockLogs, onLogA
     return { label: "ممتاز", cls: "bg-[#EAF6EF] text-[#3F7D57]" };
   };
 
+  // ----- derived values for the redesigned page -----
+  const outCount = products.filter((p) => p.stock <= 0).length;
+  const lowOnlyCount = lowStockCount - outCount;
+  if (stockFilter === "low") list = list.filter((p) => p.stock > 0 && p.stock <= (p.minStock ?? 5));
+  else if (stockFilter === "out") list = list.filter((p) => p.stock <= 0);
+  const heldBySellers = (pid) => (sellerAllocations || []).filter((a) => a.productId === pid).reduce((a, x) => a + Math.max(0, x.remaining), 0);
+  const VIAL_COLORS = ["#B24A63", "#6A4AA0", "#3E8A73", "#9A6420", "#2F5E9A", "#6B4424"];
+  const vialColor = (p) => VIAL_COLORS[Math.max(0, products.findIndex((x) => x.id === p.id)) % VIAL_COLORS.length];
+  const tone = (p) => {
+    const min = p.minStock ?? 5;
+    if (p.stock <= 0) return { pill: "bad", label: "نفد المخزون", color: "var(--bad)", bar: "linear-gradient(270deg, #D46E6E, #B04747)" };
+    if (p.stock <= min) return { pill: "due", label: "منخفض", color: "var(--due)", bar: "linear-gradient(270deg, #D08A5A, #A8612E)" };
+    if (p.stock <= min * 2) return { pill: "info", label: "جيد", color: "var(--text)", bar: null };
+    return { pill: "ok", label: "ممتاز", color: "var(--text)", bar: null };
+  };
+  const openPanel = (p, kind) => {
+    const same = panel && panel.id === p.id && panel.kind === kind;
+    setPanel(same ? null : { id: p.id, kind });
+    setAdjustQty(1); setAdjustNote(""); setAdjustType("gift");
+  };
+  const logCounts = { gift: 0, tester: 0, damage: 0 };
+  stockLogs.forEach((l) => { if (logCounts[l.type] != null) logCounts[l.type] += l.qty; });
+
+  if (tab === "log") {
+    return (
+      <div className="flex flex-col gap-5 max-w-3xl mx-auto">
+        <div>
+          <h2 className="text-xl font-bold">الهدايا والتالف والتجربة</h2>
+          <p className="text-sm nm-mut">كل ما خرج من المخزون بدون بيع</p>
+        </div>
+        <div className="nm-tog" role="tablist" aria-label="نوع العملية">
+          {[["all", "الكل", stockLogs.reduce((a, l) => a + l.qty, 0)], ["gift", "هدايا", logCounts.gift], ["tester", "تجربة", logCounts.tester], ["damage", "تالف", logCounts.damage]].map(([k, label, n]) => (
+            <button key={k} role="tab" aria-selected={logFilter === k} className={logFilter === k ? "is-on" : ""} onClick={() => setLogFilter(k)}>
+              {label} <span className="nm-num text-[11px] nm-mut">{n}</span>
+            </button>
+          ))}
+        </div>
+        {logList.length === 0 ? (
+          <div className="nm-well p-6"><EmptyState text="لا توجد عمليات مسجَّلة بعد" /></div>
+        ) : (
+          <div className="nm-card px-4 py-1">
+            {logList.map((l, i) => {
+              const c = l.type === "gift" ? "var(--accent-ink)" : l.type === "tester" ? "var(--info)" : "var(--bad)";
+              return (
+                <div key={l.id} className={`flex items-center gap-3 py-3 ${i ? "border-t border-[var(--border)]" : ""}`}>
+                  <span className="nm-knob sm" style={{ boxShadow: "var(--nm-in-sm)", color: c }}>
+                    {l.type === "gift" ? <Gift size={15} /> : l.type === "tester" ? <Droplet size={15} /> : <Ban size={15} />}
+                  </span>
+                  <div className="flex-1 min-w-0">
+                    <p className="text-sm font-semibold truncate">{l.productName} <span className="nm-num nm-mut font-normal">× {l.qty}</span></p>
+                    <p className="text-[11px] nm-mut truncate">{l.type === "gift" ? "هدية" : l.type === "tester" ? "تجربة" : "تالف"} · {l.byUserName} · {dateLabel(l.date)} {timeLabel(l.date)}{l.note ? ` · ${l.note}` : ""}</p>
+                  </div>
+                  {isAdmin && (
+                    <button onClick={() => onConfirm("هل تريد حذف هذا السجل؟ سيتم إرجاع الكمية إلى المخزون تلقائياً.", () => onDeleteLog(l.id))} className="nm-knob sm danger" aria-label="حذف السجل وإرجاع الكمية"><Trash2 size={15} /></button>
+                  )}
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    );
+  }
+
   return (
-    <div className="space-y-5">
+    <div className="flex flex-col gap-5">
       <div className="flex items-center justify-between gap-3">
-        <h2 className="text-xl font-bold">المخزون والمنتجات</h2>
+        <div>
+          <h2 className="text-xl font-bold">المنتجات</h2>
+          <p className="text-sm nm-mut">{products.length} منتج · {products.reduce((a, p) => a + p.stock, 0)} قطعة في المخزن</p>
+        </div>
         {isAdmin && !showForm && !editingId && (
           <Btn variant="ghost" className="!py-2 !px-4 text-[13px]" onClick={() => setShowForm(true)}><Plus size={16} /> منتج جديد</Btn>
         )}
       </div>
 
-      {/* Summary */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <StatCard label="عدد المنتجات" value={products.length} color="var(--accent-dark)" icon={Package} themeKey={activeTheme} slot={0} />
-        <StatCard label="بحاجة لتخزين" value={lowStockCount} color="#B23A3A" icon={AlertTriangle} themeKey={activeTheme} slot={1} />
-        {isAdmin && <StatCard label="قيمة التكلفة" value={fmt(inventoryValueCost) + " K.D"} color="var(--accent)" icon={Wallet2} themeKey={activeTheme} slot={2} />}
-        {isAdmin && <StatCard label="قيمة البيع" value={fmt(inventoryValueRetail) + " K.D"} color="#3F7D57" icon={TrendingUp} themeKey={activeTheme} slot={3} />}
-      </div>
+      {isAdmin && (
+        <div className="nm-well px-2 py-3 grid grid-cols-3 text-center" aria-label="قيمة المخزون">
+          <div><p className="text-[10.5px] nm-mut">قيمة التكلفة</p><p className="nm-num font-bold">{fmt(inventoryValueCost)}</p></div>
+          <div className="border-x border-[var(--border)]"><p className="text-[10.5px] nm-mut">قيمة البيع</p><p className="nm-num font-bold nm-ink">{fmt(inventoryValueRetail)}</p></div>
+          <div><p className="text-[10.5px] nm-mut">الربح المتوقع</p><p className="nm-num font-bold text-[var(--ok)]">{fmt(inventoryValueRetail - inventoryValueCost)}</p></div>
+        </div>
+      )}
 
       {isAdmin && (showForm || editingId) && (
         <Card className="p-4 fade-in">
@@ -4133,135 +4209,132 @@ function Inventory({ products, isAdmin, onSave, onPrintLabels, stockLogs, onLogA
             <Field label="الكمية بالمخزون"><input type="number" className={inputCls} value={form.stock} onChange={(e) => setForm({ ...form, stock: e.target.value })} /></Field>
             <Field label="حد التنبيه"><input type="number" className={inputCls} value={form.minStock} onChange={(e) => setForm({ ...form, minStock: e.target.value })} /></Field>
           </div>
-          <div className="flex gap-2 mt-3">
-            <Btn onClick={submit}><Plus size={16} /> {editingId ? "حفظ التعديل" : "إضافة المنتج"}</Btn>
+          <div className="flex gap-3 mt-4">
+            <Btn onClick={submit} className="flex-1"><Check size={16} /> {editingId ? "حفظ التعديل" : "إضافة المنتج"}</Btn>
             <Btn variant="outline" onClick={resetForm}>إلغاء</Btn>
           </div>
         </Card>
       )}
 
-      {/* Search & sort */}
-      <div className="flex flex-col sm:flex-row gap-2">
-        <div className="relative flex-1">
-          <Search size={16} className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--muted)]" />
-          <input className={inputCls + " pr-9"} placeholder="بحث باسم المنتج..." value={search} onChange={(e) => setSearch(e.target.value)} />
+      {/* Search, status filter and sort */}
+      <div className="flex flex-col gap-3">
+        <div className="relative">
+          <Search size={16} className="absolute right-4 top-1/2 -translate-y-1/2 text-[var(--muted)]" />
+          <input className={inputCls + " pr-10 !rounded-full"} placeholder="بحث باسم المنتج..." value={search} onChange={(e) => setSearch(e.target.value)} />
         </div>
-        <select className={inputCls + " sm:w-56"} value={sortBy} onChange={(e) => setSortBy(e.target.value)}>
-          <option value="name">ترتيب: الاسم (أبجدي)</option>
-          <option value="stockAsc">ترتيب: الأقل مخزوناً أولاً</option>
-        </select>
+        <div className="nm-tog" role="tablist" aria-label="حالة المخزون">
+          <button role="tab" aria-selected={stockFilter === "all"} className={stockFilter === "all" ? "is-on" : ""} onClick={() => setStockFilter("all")}>الكل <span className="nm-num text-[11px] nm-mut">{products.length}</span></button>
+          <button role="tab" aria-selected={stockFilter === "low"} className={stockFilter === "low" ? "is-on" : ""} onClick={() => setStockFilter("low")} style={stockFilter === "low" ? { color: "var(--due)" } : undefined}>منخفض <span className="nm-num text-[11px] nm-mut">{lowOnlyCount}</span></button>
+          <button role="tab" aria-selected={stockFilter === "out"} className={stockFilter === "out" ? "is-on" : ""} onClick={() => setStockFilter("out")} style={stockFilter === "out" ? { color: "var(--bad)" } : undefined}>نفد <span className="nm-num text-[11px] nm-mut">{outCount}</span></button>
+        </div>
+        <button onClick={() => setSortBy(sortBy === "name" ? "stockAsc" : "name")} className="nm-btn self-start !py-1.5 !px-3.5 text-[12px]" aria-label="تغيير الترتيب">
+          <ArrowLeftRight size={13} className="rotate-90" /> الترتيب: {sortBy === "name" ? "أبجدي" : "الأقل مخزوناً أولاً"}
+        </button>
       </div>
 
       {list.length === 0 ? (
-        <Card className="p-8"><EmptyState text={products.length === 0 ? "لا توجد منتجات مضافة بعد" : "لا توجد منتجات مطابقة للبحث"} /></Card>
+        <div className="nm-well p-8"><EmptyState text={products.length === 0 ? "لا توجد منتجات مضافة بعد" : "لا توجد منتجات مطابقة"} /></div>
       ) : (
-        <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
+        <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-5">
           {list.map((p) => {
-            const badge = stockBadge(p);
-            const expanded = expandedId === p.id;
+            const t = tone(p);
+            const min = p.minStock ?? 5;
+            const held = heldBySellers(p.id);
+            const managed = (sellerAllocations || []).some((a) => a.productId === p.id);
+            const myShare = (sellerAllocations || []).find((a) => a.productId === p.id && a.sellerId === currentUserId);
+            const profit = p.price - (p.cost || 0);
+            const margin = p.price > 0 ? (profit / p.price) * 100 : 0;
+            const open = panel && panel.id === p.id ? panel.kind : null;
+            const scale = Math.max(maxStock, min * 3);
             return (
-              <Card key={p.id} className="p-4 card-hover">
-                <div className="flex justify-between items-start gap-2">
-                  <div className="min-w-0">
-                    <p className="font-bold truncate">{p.name}</p>
-                    <p className="text-xs text-[var(--muted)]">{fmt(p.price)} K.D / وحدة</p>
-                    {isAdmin && <p className="text-xs text-[var(--muted)]">التكلفة: {fmt(p.cost || 0)} K.D</p>}
-                  </div>
-                  <span className={`text-[10px] font-bold px-2 py-1 rounded-full shrink-0 ${badge.cls}`}>{badge.label}</span>
-                </div>
-
-                <div className="flex items-center justify-between mt-2">
-                  <p className={`text-sm font-bold ${p.stock <= (p.minStock ?? 5) ? "text-[#B23A3A]" : "text-[#3F7D57]"}`}>
-                    الكمية المتبقية: {p.stock}
-                  </p>
-                  {p.stock <= (p.minStock ?? 5) && <AlertTriangle size={16} className="text-[#B23A3A]" />}
-                </div>
-                <div className="nm-groove mt-2" aria-hidden="true">
-                  <span style={{ width: `${Math.max(p.stock > 0 ? 4 : 0, (p.stock / maxStock) * 100)}%`, ...(p.stock <= (p.minStock ?? 5) ? { background: "linear-gradient(270deg, #D08A5A, #A8612E)" } : {}) }} />
-                </div>
-
-                <button
-                  onClick={() => setExpandedId(expanded ? null : p.id)}
-                  className="w-full mt-3 text-xs font-semibold text-[var(--accent-dark)] bg-[var(--surface-3)] rounded-lg px-3 py-1.5 flex items-center justify-center gap-1.5"
-                >
-                  {expanded ? "إخفاء الخيارات" : "خيارات إضافية"}
-                </button>
-
-                {expanded && (
-                  <div className="mt-2 space-y-2 fade-in">
-                    <div className="flex items-center gap-2">
-                      <input
-                        type="number"
-                        min="1"
-                        className="w-16 rounded-lg border border-[var(--border)] bg-[var(--input-bg)] px-2 py-1.5 text-xs text-center"
-                        value={labelQty[p.id] ?? 12}
-                        onChange={(e) => setLabelQty({ ...labelQty, [p.id]: Math.max(1, Number(e.target.value) || 1) })}
-                      />
-                      <Btn variant="ghost" className="flex-1 py-1.5 text-xs" onClick={() => onPrintLabels(p, labelQty[p.id] ?? 12)}>
-                        <Tag size={14} /> طباعة ملصقات وباركود
-                      </Btn>
+              <Card key={p.id} className="p-4 flex flex-col gap-4">
+                {/* identity + the number that matters */}
+                <div className="flex items-center gap-3">
+                  <span className="nm-knob lg" style={{ boxShadow: "var(--nm-in-sm)", color: p.stock <= 0 ? "var(--faint)" : vialColor(p) }} aria-hidden="true"><Droplet size={22} /></span>
+                  <div className="flex-1 min-w-0">
+                    <p className="font-bold text-[16px] leading-tight truncate">{p.name}</p>
+                    <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
+                      <span className={`nm-pill ${t.pill}`}>{t.label}</span>
+                      {managed && <span className="nm-pill plain"><Boxes size={11} /> {myShare ? `حصتي ${Math.max(0, myShare.remaining)}` : "موزّع"}</span>}
                     </div>
+                  </div>
+                  <div className="nm-well px-3 py-2 text-center shrink-0" style={{ minWidth: 68 }}>
+                    <p className="nm-num text-[26px] font-bold leading-none" style={{ color: t.color }}>{p.stock}</p>
+                    <p className="text-[10px] nm-mut mt-1">قطعة</p>
+                  </div>
+                </div>
 
-                    <button
-                      onClick={() => { setAdjustingId(adjustingId === p.id ? null : p.id); setAdjustQty(1); setAdjustNote(""); setAdjustType("gift"); }}
-                      className="w-full text-xs font-semibold text-[var(--accent-dark)] bg-[var(--surface-2)] rounded-lg px-3 py-1.5 flex items-center justify-center gap-1.5"
-                    >
-                      <Gift size={14} /> تسجيل هدية / تالف / تجربة
+                {/* stock level against its alert threshold */}
+                <div>
+                  <div className="nm-groove relative" role="img" aria-label={`المخزون ${p.stock}، حد التنبيه ${min}`}>
+                    <span style={{ width: `${Math.max(p.stock > 0 ? 4 : 0, Math.min(100, (p.stock / scale) * 100))}%`, ...(t.bar ? { background: t.bar } : {}) }} />
+                    <i className="absolute top-0 bottom-0 w-[2px] rounded" style={{ right: `calc(${Math.min(96, (min / scale) * 100)}% + 3px)`, background: "var(--faint)" }} />
+                  </div>
+                  <div className="flex justify-between text-[10.5px] nm-mut mt-1.5">
+                    <span>حد التنبيه {min}</span>
+                    {managed && <span>بحوزة البائعين {held} · غير موزّع {Math.max(0, p.stock - held)}</span>}
+                  </div>
+                </div>
+
+                {/* money */}
+                <div className={`nm-well py-2.5 px-2 grid text-center ${isAdmin ? "grid-cols-3" : "grid-cols-2"}`}>
+                  <div><p className="text-[10px] nm-mut">سعر البيع</p><p className="nm-num font-bold text-sm">{fmt(p.price)}</p></div>
+                  {!isAdmin && (
+                    <div className="border-r border-[var(--border)]">
+                      <p className="text-[10px] nm-mut">{managed ? "حصتي" : "متاح للبيع"}</p>
+                      <p className="nm-num font-bold text-sm nm-ink">{managed ? Math.max(0, myShare?.remaining || 0) : p.stock}</p>
+                    </div>
+                  )}
+                  {isAdmin && <div className="border-x border-[var(--border)]"><p className="text-[10px] nm-mut">التكلفة</p><p className="nm-num font-bold text-sm">{fmt(p.cost || 0)}</p></div>}
+                  {isAdmin && <div><p className="text-[10px] nm-mut">الربح · {margin.toFixed(0)}٪</p><p className="nm-num font-bold text-sm text-[var(--ok)]">{fmt(profit)}</p></div>}
+                </div>
+
+                {/* every action one tap away */}
+                <div className="flex justify-around gap-1">
+                  <button className="nm-act" onClick={() => openPanel(p, "adjust")} disabled={p.stock <= 0} style={p.stock <= 0 ? { opacity: 0.45 } : undefined}>
+                    <span className={`nm-knob nm-ink ${open === "adjust" ? "is-on" : ""}`}><Gift size={17} /></span>هدية/تالف
+                  </button>
+                  <button className="nm-act" onClick={() => openPanel(p, "labels")}>
+                    <span className={`nm-knob ${open === "labels" ? "is-on" : ""}`}><Tag size={17} /></span>ملصقات
+                  </button>
+                  {isAdmin && (
+                    <button className="nm-act" onClick={() => { setPanel(null); startEdit(p); }}>
+                      <span className="nm-knob"><Pencil size={17} /></span>تعديل
                     </button>
+                  )}
+                  {isAdmin && (
+                    <button className="nm-act" onClick={() => onConfirm(`هل تريد حذف المنتج "${p.name}"؟ لا يمكن التراجع عن هذا الإجراء.`, () => onSave(products.filter((x) => x.id !== p.id)))}>
+                      <span className="nm-knob danger"><Trash2 size={17} /></span>حذف
+                    </button>
+                  )}
+                </div>
 
-                    {adjustingId === p.id && (
-                      <div className="bg-[var(--surface-2)] rounded-xl p-3 space-y-2 fade-in">
-                        <div className="flex gap-2">
-                          <button
-                            onClick={() => setAdjustType("gift")}
-                            className={`flex-1 py-1.5 rounded-lg text-xs font-semibold flex items-center justify-center gap-1 transition ${adjustType === "gift" ? "bg-[var(--accent)] text-white" : "bg-[var(--surface)] text-[var(--muted)]"}`}
-                          >
-                            <Gift size={13} /> هدية
-                          </button>
-                          <button
-                            onClick={() => setAdjustType("tester")}
-                            className={`flex-1 py-1.5 rounded-lg text-xs font-semibold flex items-center justify-center gap-1 transition ${adjustType === "tester" ? "bg-[#3B6EA8] text-white" : "bg-[var(--surface)] text-[var(--muted)]"}`}
-                          >
-                            <Droplet size={13} /> تجربة
-                          </button>
-                          <button
-                            onClick={() => setAdjustType("damage")}
-                            className={`flex-1 py-1.5 rounded-lg text-xs font-semibold flex items-center justify-center gap-1 transition ${adjustType === "damage" ? "bg-[#B23A3A] text-white" : "bg-[var(--surface)] text-[var(--muted)]"}`}
-                          >
-                            <Ban size={13} /> تالف
-                          </button>
-                        </div>
-                        <div className="flex gap-2">
-                          <input
-                            type="number"
-                            min="1"
-                            max={p.stock}
-                            className="w-16 rounded-lg border border-[var(--border)] bg-[var(--input-bg)] px-2 py-1.5 text-xs text-center"
-                            value={adjustQty}
-                            onChange={(e) => setAdjustQty(Math.max(1, Math.min(p.stock, Number(e.target.value) || 1)))}
-                          />
-                          <input
-                            className="flex-1 rounded-lg border border-[var(--border)] bg-[var(--input-bg)] px-2 py-1.5 text-xs"
-                            placeholder="سبب / ملاحظة (اختياري)"
-                            value={adjustNote}
-                            onChange={(e) => setAdjustNote(e.target.value)}
-                          />
-                        </div>
-                        <div className="flex gap-2">
-                          <Btn className="!py-1.5 flex-1 text-xs" onClick={() => submitAdjustment(p)}>
-                            <Check size={13} /> تأكيد الخصم من المخزون
-                          </Btn>
-                          <button onClick={() => setAdjustingId(null)} className="p-1.5 text-[var(--muted)]"><X size={16} /></button>
-                        </div>
-                      </div>
-                    )}
+                {open === "labels" && (
+                  <div className="nm-well p-3 flex flex-col gap-3 fade-in">
+                    <p className="text-xs font-semibold">طباعة ملصقات وباركود</p>
+                    <div className="flex items-center gap-3">
+                      <SoftStepper value={labelQty[p.id] ?? 12} min={1} max={500} onChange={(v) => setLabelQty({ ...labelQty, [p.id]: v })} label="عدد الملصقات" />
+                      <Btn variant="ghost" className="flex-1 !py-2.5 text-[13px]" onClick={() => onPrintLabels(p, labelQty[p.id] ?? 12)}><Printer size={15} /> طباعة</Btn>
+                    </div>
+                  </div>
+                )}
 
-                    {isAdmin && (
-                      <div className="flex gap-2">
-                        <button onClick={() => startEdit(p)} className="flex-1 text-xs font-semibold text-[var(--accent-dark)] bg-[var(--surface-2)] rounded-lg px-3 py-1.5">تعديل</button>
-                        <button onClick={() => onConfirm(`هل تريد حذف المنتج "${p.name}"؟ لا يمكن التراجع عن هذا الإجراء.`, () => onSave(products.filter((x) => x.id !== p.id)))} className="flex-1 text-xs font-semibold text-[#B23A3A] bg-[#FBEAEA] rounded-lg px-3 py-1.5">حذف</button>
-                      </div>
-                    )}
+                {open === "adjust" && (
+                  <div className="nm-well p-3 flex flex-col gap-3 fade-in">
+                    <p className="text-xs font-semibold">تسجيل خروج بدون بيع</p>
+                    <div className="nm-tog !p-1" role="radiogroup" aria-label="نوع العملية">
+                      <button role="radio" aria-checked={adjustType === "gift"} onClick={() => setAdjustType("gift")} className={adjustType === "gift" ? "is-on" : ""}><Gift size={13} /> هدية</button>
+                      <button role="radio" aria-checked={adjustType === "tester"} onClick={() => setAdjustType("tester")} className={adjustType === "tester" ? "is-on" : ""} style={adjustType === "tester" ? { color: "var(--info)" } : undefined}><Droplet size={13} /> تجربة</button>
+                      <button role="radio" aria-checked={adjustType === "damage"} onClick={() => setAdjustType("damage")} className={adjustType === "damage" ? "is-on" : ""} style={adjustType === "damage" ? { color: "var(--bad)" } : undefined}><Ban size={13} /> تالف</button>
+                    </div>
+                    <div className="flex items-center gap-3">
+                      <SoftStepper value={adjustQty} min={1} max={p.stock} onChange={setAdjustQty} label="الكمية" />
+                      <input className={inputCls + " flex-1 !py-2 !text-xs"} placeholder="سبب / ملاحظة (اختياري)" value={adjustNote} onChange={(e) => setAdjustNote(e.target.value)} />
+                    </div>
+                    <div className="flex gap-3">
+                      <Btn className="flex-1 !py-2.5 text-[13px]" onClick={() => { submitAdjustment(p); setPanel(null); }}><Check size={15} /> تأكيد الخصم من المخزون</Btn>
+                      <button onClick={() => setPanel(null)} className="nm-knob" aria-label="إغلاق"><X size={16} /></button>
+                    </div>
                   </div>
                 )}
               </Card>
@@ -4269,40 +4342,27 @@ function Inventory({ products, isAdmin, onSave, onPrintLabels, stockLogs, onLogA
           })}
         </div>
       )}
+    </div>
+  );
+}
 
-      <div>
-        <div className="flex items-center justify-between mb-3 flex-wrap gap-2">
-          <h3 className="font-bold flex items-center gap-2"><Gift size={18} /> سجل الهدايا والتالف والتجربة</h3>
-          <select className={inputCls + " w-44 !py-1.5 text-xs"} value={logFilter} onChange={(e) => setLogFilter(e.target.value)}>
-            <option value="all">كل الأنواع</option>
-            <option value="gift">هدايا</option>
-            <option value="tester">تجربة</option>
-            <option value="damage">تالف</option>
-          </select>
-        </div>
-        {logList.length === 0 ? (
-          <Card className="p-6"><EmptyState text="لا توجد عمليات مسجَّلة بعد" /></Card>
-        ) : (
-          <div className="space-y-2">
-            {logList.map((l) => (
-              <Card key={l.id} className="p-3 flex items-center justify-between">
-                <div className="flex items-center gap-3">
-                  <div className={`w-9 h-9 rounded-full flex items-center justify-center shrink-0 ${l.type === "gift" ? "bg-[var(--surface-3)] text-[var(--accent)]" : l.type === "tester" ? "bg-[#EAF1F8] text-[#3B6EA8]" : "bg-[#FBEAEA] text-[#B23A3A]"}`}>
-                    {l.type === "gift" ? <Gift size={16} /> : l.type === "tester" ? <Droplet size={16} /> : <Ban size={16} />}
-                  </div>
-                  <div>
-                    <p className="text-sm font-semibold">{l.productName} <span className="text-[var(--muted)] font-normal">× {l.qty}</span></p>
-                    <p className="text-[11px] text-[var(--muted)]">{l.byUserName} · {dateLabel(l.date)} {timeLabel(l.date)}{l.note ? ` · ${l.note}` : ""}</p>
-                  </div>
-                </div>
-                {isAdmin && (
-                  <button onClick={() => onConfirm("هل تريد حذف هذا السجل؟ سيتم إرجاع الكمية إلى المخزون تلقائياً.", () => onDeleteLog(l.id))} className="p-1.5 rounded-lg text-[#B23A3A] hover:bg-[#FBEAEA] shrink-0"><Trash2 size={15} /></button>
-                )}
-              </Card>
-            ))}
-          </div>
-        )}
-      </div>
+// Round − / + stepper: the buttons are raised, the track is sunk.
+function SoftStepper({ value, onChange, min = 1, max = 9999, label }) {
+  const v = Number(value) || min;
+  const set = (n) => onChange(Math.max(min, Math.min(max, n)));
+  return (
+    <div className="nm-in-sm rounded-full p-1 inline-flex items-center gap-1 shrink-0" role="group" aria-label={label}>
+      <button type="button" className="nm-knob sm" onClick={() => set(v - 1)} disabled={v <= min} aria-label="إنقاص"><Minus size={15} /></button>
+      <input
+        type="number"
+        inputMode="numeric"
+        className="nm-num w-10 text-center text-sm font-bold bg-transparent outline-none"
+        style={{ MozAppearance: "textfield" }}
+        value={v}
+        onChange={(e) => set(Number(e.target.value) || min)}
+        aria-label={label}
+      />
+      <button type="button" className="nm-knob sm" onClick={() => set(v + 1)} disabled={v >= max} aria-label="زيادة"><Plus size={15} /></button>
     </div>
   );
 }
