@@ -2291,6 +2291,8 @@ export default function App() {
           )}
           {view === "users" && isAdmin && (
             <UsersAdmin
+              sales={sales}
+              sellerAllocations={sellerAllocations}
               users={users}
               onSave={async (next) => { await persistUsers(next); showToast("تم حفظ بيانات المستخدمين بنجاح"); }}
               onConfirm={askConfirm}
@@ -4369,21 +4371,30 @@ function SoftStepper({ value, onChange, min = 1, max = 9999, label }) {
 
 /* ---------------------------------- Users Admin ---------------------------------- */
 
-function UsersAdmin({ users, onSave, onConfirm, currentUser, onToggleStockManager }) {
+function UsersAdmin({ users, onSave, onConfirm, currentUser, onToggleStockManager, sales = [], sellerAllocations = [] }) {
   const [form, setForm] = useState({ username: "", password: "", name: "", role: "seller" });
   const [editingId, setEditingId] = useState(null);
   const [editForm, setEditForm] = useState({ username: "", password: "", name: "", role: "seller", securityQuestion: "", securityAnswer: "" });
+  const [showForm, setShowForm] = useState(false);
+  const [showPass, setShowPass] = useState(false);
+  const [showHelp, setShowHelp] = useState(false);
+  const [roleFilter, setRoleFilter] = useState("all"); // all | admin | seller
+  const [formError, setFormError] = useState("");
+  const [editError, setEditError] = useState("");
 
   const submit = async () => {
-    if (!form.username || !form.password || !form.name) return;
-    if (users.some((u) => u.username.toLowerCase() === form.username.toLowerCase())) return;
+    if (!form.name.trim() || !form.username.trim() || !form.password) { setFormError("أكمل الاسم واسم المستخدم وكلمة المرور"); return; }
+    if (users.some((u) => u.username.toLowerCase() === form.username.trim().toLowerCase())) { setFormError("اسم المستخدم مستعمل من حساب آخر"); return; }
     const hashed = await hashPassword(form.password);
-    onSave([...users, { id: uid(), ...form, password: hashed }]);
+    onSave([...users, { id: uid(), ...form, name: form.name.trim(), username: form.username.trim(), password: hashed }]);
     setForm({ username: "", password: "", name: "", role: "seller" });
+    setFormError("");
+    setShowForm(false);
   };
 
   const startEdit = (u) => {
     setEditingId(u.id);
+    setEditError("");
     setEditForm({
       username: u.username,
       password: "", // blank = keep the current (hashed) password unchanged
@@ -4395,8 +4406,8 @@ function UsersAdmin({ users, onSave, onConfirm, currentUser, onToggleStockManage
   };
 
   const saveEdit = async (id) => {
-    if (!editForm.username || !editForm.name) return;
-    if (users.some((u) => u.id !== id && u.username.toLowerCase() === editForm.username.toLowerCase())) return;
+    if (!editForm.username || !editForm.name) { setEditError("الاسم واسم المستخدم مطلوبان"); return; }
+    if (users.some((u) => u.id !== id && u.username.toLowerCase() === editForm.username.toLowerCase())) { setEditError("اسم المستخدم مستعمل من حساب آخر"); return; }
     const original = users.find((u) => u.id === id);
     const updates = { ...editForm };
     updates.password = editForm.password.trim() ? await hashPassword(editForm.password.trim()) : original.password;
@@ -4412,123 +4423,213 @@ function UsersAdmin({ users, onSave, onConfirm, currentUser, onToggleStockManage
     setEditingId(null);
   };
 
-  return (
-    <div className="space-y-5">
-      <h2 className="text-xl font-bold">إدارة المستخدمين والصلاحيات</h2>
+  const admins = users.filter((u) => u.role === "admin");
+  const sellersOnly = users.filter((u) => u.role !== "admin");
+  const stockManagers = users.filter((u) => u.canManageStock && !u.isPrimaryAdmin);
+  const monthStart = new Date(new Date().getFullYear(), new Date().getMonth(), 1);
+  const statsOf = (u) => {
+    const mine = sales.filter((x) => x.sellerId === u.id && new Date(x.date) >= monthStart);
+    return {
+      invoices: mine.length,
+      collected: mine.reduce((a, x) => a + x.collected, 0),
+      held: sellerAllocations.filter((a) => a.sellerId === u.id).reduce((a, x) => a + Math.max(0, x.remaining), 0),
+    };
+  };
+  const AVATAR_COLORS = ["#2F7F86", "#6A4AA0", "#B24A63", "#9A6420", "#2F5E9A", "#3E8A73"];
+  const shown = users
+    .filter((u) => roleFilter === "all" || (roleFilter === "admin" ? u.role === "admin" : u.role !== "admin"))
+    // primary first, then admins, then sellers — a stable, predictable order
+    .sort((x, y) => (y.isPrimaryAdmin ? 1 : 0) - (x.isPrimaryAdmin ? 1 : 0) || (y.role === "admin" ? 1 : 0) - (x.role === "admin" ? 1 : 0));
 
-      {currentUser.isPrimaryAdmin && (
-        <Card className="p-4 flex items-start gap-3">
-          <div className="w-9 h-9 rounded-full bg-[#FFF6E5] flex items-center justify-center shrink-0">
-            <Boxes size={18} className="text-[#C97B3D]" />
+  const RoleToggle = ({ value, onChange, disabled }) => (
+    <div className="nm-tog !p-1" role="radiogroup" aria-label="الدور" style={disabled ? { opacity: 0.55, pointerEvents: "none" } : undefined}>
+      <button type="button" role="radio" aria-checked={value === "seller"} className={value === "seller" ? "is-on" : ""} onClick={() => onChange("seller")}>بائع</button>
+      <button type="button" role="radio" aria-checked={value === "admin"} className={value === "admin" ? "is-on" : ""} onClick={() => onChange("admin")}>مدير</button>
+    </div>
+  );
+
+  return (
+    <div className="flex flex-col gap-5 max-w-5xl mx-auto">
+      <div className="flex items-center justify-between gap-3">
+        <div className="min-w-0">
+          <h2 className="text-xl font-bold">المستخدمون والصلاحيات</h2>
+          <p className="text-sm nm-mut">{users.length} حساب في النظام</p>
+        </div>
+        {!showForm && (
+          <Btn variant="ghost" className="!py-2 !px-4 text-[13px] shrink-0" onClick={() => { setShowForm(true); setFormError(""); }}><Plus size={16} /> مستخدم جديد</Btn>
+        )}
+      </div>
+
+      <div className="nm-well px-2 py-3 grid grid-cols-3 text-center" aria-label="ملخص الحسابات">
+        <div><p className="text-[10.5px] nm-mut">المدراء</p><p className="nm-num font-bold">{admins.length}</p></div>
+        <div className="border-x border-[var(--border)]"><p className="text-[10.5px] nm-mut">البائعون</p><p className="nm-num font-bold">{sellersOnly.length}</p></div>
+        <div className="min-w-0 px-1"><p className="text-[10.5px] nm-mut">مسؤول المخزن</p><p className="font-bold text-sm truncate" style={{ color: "var(--due)" }}>{stockManagers.length ? stockManagers.map((u) => u.name).join("، ") : "الأساسي فقط"}</p></div>
+      </div>
+
+      {showForm && (
+        <Card className="p-4 flex flex-col gap-4 fade-in">
+          <div className="flex items-center justify-between">
+            <h3 className="font-bold">إضافة مستخدم جديد</h3>
+            <button onClick={() => { setShowForm(false); setFormError(""); }} className="nm-knob sm" aria-label="إغلاق"><X size={15} /></button>
           </div>
-          <div className="text-xs text-[var(--muted)] leading-relaxed">
-            <p className="font-bold text-sm text-[var(--text)] mb-0.5">صلاحية مسؤول المخزن</p>
-            صاحب هذه الصلاحية — مديراً كان أو بائعاً — يوزّع المنتجات بالعدد على جميع البائعين، ويزيد أو ينقص حصة كل بائع، ويطّلع على سجل الحركات المفصّل بالاسم. بقية البائعين يرون حصتهم فقط. يمكنك منحها أو سحبها من زر "تعيين مسؤول مخزن" بجانب أي حساب.
+          <Field label="الاسم"><input className={inputCls} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} placeholder="مثال: فهد" /></Field>
+          <div>
+            <span className="block text-xs font-semibold text-[var(--muted)] mb-1">الدور</span>
+            <RoleToggle value={form.role} onChange={(role) => setForm({ ...form, role })} />
+            <p className="text-[11px] nm-mut mt-1.5">{form.role === "admin" ? "المدير يرى المالية والإدارة ويعدّل ويحذف." : "البائع يبيع ويحصّل ويرى حصته فقط."}</p>
           </div>
+          <div className="grid grid-cols-2 gap-3">
+            <Field label="اسم المستخدم"><input dir="ltr" autoCapitalize="none" className={inputCls + " text-right"} value={form.username} onChange={(e) => setForm({ ...form, username: e.target.value })} placeholder="fahad" /></Field>
+            <Field label="كلمة المرور">
+              <span className="relative block">
+                <input dir="ltr" type={showPass ? "text" : "password"} className={inputCls + " text-right pl-10"} value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} />
+                <button type="button" onClick={() => setShowPass((v) => !v)} className="absolute left-2 top-1/2 -translate-y-1/2 p-1 nm-mut" aria-label={showPass ? "إخفاء كلمة المرور" : "إظهار كلمة المرور"}>{showPass ? <EyeOff size={16} /> : <Eye size={16} />}</button>
+              </span>
+            </Field>
+          </div>
+          {formError && <p className="text-xs font-semibold text-[var(--bad)] flex items-center gap-1.5" role="alert"><AlertTriangle size={14} /> {formError}</p>}
+          <Btn onClick={submit} className="w-full"><Plus size={16} /> إضافة المستخدم</Btn>
         </Card>
       )}
 
-      <Card className="p-4">
-        <h3 className="font-bold mb-3">إضافة مستخدم جديد</h3>
-        <div className="grid grid-cols-2 gap-3">
-          <Field label="الاسم"><input className={inputCls} value={form.name} onChange={(e) => setForm({ ...form, name: e.target.value })} /></Field>
-          <Field label="الدور">
-            <select className={inputCls} value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })}>
-              <option value="seller">بائع</option>
-              <option value="admin">مدير</option>
-            </select>
-          </Field>
-          <Field label="اسم المستخدم"><input className={inputCls} value={form.username} onChange={(e) => setForm({ ...form, username: e.target.value })} /></Field>
-          <Field label="كلمة المرور"><input className={inputCls} value={form.password} onChange={(e) => setForm({ ...form, password: e.target.value })} /></Field>
+      <div className="flex items-center gap-3">
+        <div className="nm-tog flex-1" role="tablist" aria-label="تصفية حسب الدور">
+          <button role="tab" aria-selected={roleFilter === "all"} className={roleFilter === "all" ? "is-on" : ""} onClick={() => setRoleFilter("all")}>الكل <span className="nm-num text-[11px] nm-mut">{users.length}</span></button>
+          <button role="tab" aria-selected={roleFilter === "admin"} className={roleFilter === "admin" ? "is-on" : ""} onClick={() => setRoleFilter("admin")}>المدراء <span className="nm-num text-[11px] nm-mut">{admins.length}</span></button>
+          <button role="tab" aria-selected={roleFilter === "seller"} className={roleFilter === "seller" ? "is-on" : ""} onClick={() => setRoleFilter("seller")}>البائعون <span className="nm-num text-[11px] nm-mut">{sellersOnly.length}</span></button>
         </div>
-        <Btn onClick={submit} className="mt-3"><Plus size={16} /> إضافة المستخدم</Btn>
-      </Card>
+        {currentUser.isPrimaryAdmin && (
+          <button onClick={() => setShowHelp((v) => !v)} className={`nm-knob ${showHelp ? "is-on" : ""}`} aria-expanded={showHelp} aria-label="ما هي صلاحية مسؤول المخزن؟" title="ما هي صلاحية مسؤول المخزن؟"><Boxes size={17} /></button>
+        )}
+      </div>
 
-      <div className="space-y-2">
-        {users.map((u) => (
-          <Card key={u.id} className="p-4">
-            {editingId === u.id ? (
-              <div className="space-y-3">
-                <div className="grid grid-cols-2 gap-3">
-                  <Field label="الاسم"><input className={inputCls} value={editForm.name} onChange={(e) => setEditForm({ ...editForm, name: e.target.value })} /></Field>
-                  <Field label="الدور">
-                    <select className={inputCls} value={editForm.role} onChange={(e) => setEditForm({ ...editForm, role: e.target.value })} disabled={u.isPrimaryAdmin}>
-                      <option value="seller">بائع</option>
-                      <option value="admin">مدير</option>
-                    </select>
-                  </Field>
-                  <Field label="اسم المستخدم"><input className={inputCls} value={editForm.username} onChange={(e) => setEditForm({ ...editForm, username: e.target.value })} /></Field>
-                  <Field label="كلمة المرور الجديدة">
-                    <input className={inputCls} value={editForm.password} onChange={(e) => setEditForm({ ...editForm, password: e.target.value })} placeholder="اتركه فارغاً للإبقاء عليها" />
-                  </Field>
+      {currentUser.isPrimaryAdmin && showHelp && (
+        <div className="nm-well p-4 text-xs leading-relaxed nm-mut fade-in">
+          <p className="font-bold text-sm text-[var(--text)] mb-1">صلاحية مسؤول المخزن</p>
+          صاحبها — مديراً كان أو بائعاً — يوزّع المنتجات بالعدد على جميع البائعين، ويزيد أو ينقص حصة كل بائع، ويطّلع على سجل الحركات بالاسم. بقية البائعين يرون حصتهم فقط. فعّلها أو أوقفها من المفتاح داخل بطاقة أي حساب.
+        </div>
+      )}
+
+      {shown.length === 0 ? (
+        <div className="nm-well p-6"><EmptyState text="لا توجد حسابات بهذا الدور" /></div>
+      ) : (
+        <div className="grid md:grid-cols-2 gap-5">
+          {shown.map((u) => {
+            const st = statsOf(u);
+            const isMe = currentUser.id === u.id;
+            const color = AVATAR_COLORS[Math.max(0, users.findIndex((x) => x.id === u.id)) % AVATAR_COLORS.length];
+            const canEdit = !u.isPrimaryAdmin || isMe;
+            const canDelete = !u.isPrimaryAdmin;
+            const editing = editingId === u.id;
+            return (
+              <Card key={u.id} className="p-4 flex flex-col gap-4">
+                {/* identity */}
+                <div className="flex items-center gap-3">
+                  <span className="nm-knob lg" style={{ boxShadow: "var(--nm-in-sm)" }} aria-hidden="true">
+                    <span className="text-xl font-bold" style={{ color }}>{(u.name || "?").trim().charAt(0)}</span>
+                  </span>
+                  <div className="flex-1 min-w-0">
+                    <p className="font-bold text-[16px] leading-tight truncate">{u.name}</p>
+                    <p className="nm-num text-xs nm-mut truncate text-right">@{u.username}</p>
+                  </div>
+                  <div className="flex flex-col items-end gap-1.5 shrink-0">
+                    <span className={`nm-pill ${u.role === "admin" ? "info" : "plain"}`}>{u.role === "admin" ? "مدير" : "بائع"}</span>
+                    {isMe && <span className="nm-pill ok">أنت</span>}
+                  </div>
                 </div>
-                {u.isPrimaryAdmin && (
-                  <div className="pt-2 border-t border-[var(--border)] space-y-3">
-                    <p className="text-xs font-semibold text-[var(--muted)]">سؤال استعادة الحساب (لهذا الحساب فقط)</p>
-                    <Field label="السؤال"><input className={inputCls} value={editForm.securityQuestion} onChange={(e) => setEditForm({ ...editForm, securityQuestion: e.target.value })} /></Field>
-                    <Field label="إجابة جديدة"><input className={inputCls} value={editForm.securityAnswer} onChange={(e) => setEditForm({ ...editForm, securityAnswer: e.target.value })} placeholder="اتركها فارغة للإبقاء عليها" /></Field>
+
+                {(u.isPrimaryAdmin || u.canManageStock) && !editing && (
+                  <div className="flex items-center gap-1.5 flex-wrap -mt-1">
+                    {u.isPrimaryAdmin && <span className="nm-pill" style={{ color: "var(--accent-ink)", background: "color-mix(in srgb, var(--accent) 14%, var(--bg))" }}><ShieldCheck size={11} /> الحساب الأساسي</span>}
+                    {(u.canManageStock || u.isPrimaryAdmin) && <span className="nm-pill due"><Boxes size={11} /> مسؤول المخزن</span>}
                   </div>
                 )}
-                <div className="flex gap-2">
-                  <Btn onClick={() => saveEdit(u.id)}><Save size={16} /> حفظ</Btn>
-                  <Btn variant="outline" onClick={() => setEditingId(null)}>إلغاء</Btn>
-                </div>
-              </div>
-            ) : (
-              <div className="flex items-center justify-between">
-                <div>
-                  <p className="font-bold">
-                    {u.name} <span className="text-xs font-normal text-[var(--muted)]">({u.username})</span>
+
+                {editing ? (
+                  <div className="flex flex-col gap-3 fade-in">
+                    <Field label="الاسم"><input className={inputCls} value={editForm.name} onChange={(e) => setEditForm({ ...editForm, name: e.target.value })} /></Field>
+                    <div>
+                      <span className="block text-xs font-semibold text-[var(--muted)] mb-1">الدور</span>
+                      <RoleToggle value={editForm.role} onChange={(role) => setEditForm({ ...editForm, role })} disabled={u.isPrimaryAdmin} />
+                      {u.isPrimaryAdmin && <p className="text-[11px] nm-mut mt-1.5 flex items-center gap-1"><ShieldCheck size={12} /> دور الحساب الأساسي ثابت ولا يمكن تغييره</p>}
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                      <Field label="اسم المستخدم"><input dir="ltr" autoCapitalize="none" className={inputCls + " text-right"} value={editForm.username} onChange={(e) => setEditForm({ ...editForm, username: e.target.value })} /></Field>
+                      <Field label="كلمة المرور الجديدة"><input dir="ltr" className={inputCls + " text-right"} value={editForm.password} onChange={(e) => setEditForm({ ...editForm, password: e.target.value })} placeholder="بدون تغيير" /></Field>
+                    </div>
+                    <p className="text-[11px] nm-mut -mt-1">اترك كلمة المرور فارغة للإبقاء على الحالية.</p>
                     {u.isPrimaryAdmin && (
-                      <span className="text-[10px] font-semibold text-[var(--accent)] mr-2 inline-flex items-center gap-1">
-                        <ShieldCheck size={11} /> الحساب الأساسي{currentUser.id !== u.id ? " — محمي من التعديل والحذف" : ""}
-                      </span>
+                      <div className="nm-well p-3 flex flex-col gap-3">
+                        <p className="text-xs font-semibold flex items-center gap-1.5"><KeyRound size={13} className="nm-ink" /> سؤال استعادة الحساب (لهذا الحساب فقط)</p>
+                        <Field label="السؤال"><input className={inputCls} value={editForm.securityQuestion} onChange={(e) => setEditForm({ ...editForm, securityQuestion: e.target.value })} /></Field>
+                        <Field label="إجابة جديدة"><input className={inputCls} value={editForm.securityAnswer} onChange={(e) => setEditForm({ ...editForm, securityAnswer: e.target.value })} placeholder="اتركها فارغة للإبقاء عليها" /></Field>
+                      </div>
                     )}
-                  </p>
-                  <p className="text-xs text-[var(--muted)] flex items-center gap-1.5 flex-wrap">
-                    {u.role === "admin" ? "مدير" : "بائع"}
-                    {(u.canManageStock || u.isPrimaryAdmin) && (
-                      <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-[#FFF6E5] text-[#C97B3D] inline-flex items-center gap-1">
-                        <Boxes size={10} /> مسؤول المخزن
-                      </span>
+                    {editError && <p className="text-xs font-semibold text-[var(--bad)] flex items-center gap-1.5" role="alert"><AlertTriangle size={14} /> {editError}</p>}
+                    <div className="flex gap-3">
+                      <Btn className="flex-1" onClick={() => saveEdit(u.id)}><Save size={16} /> حفظ</Btn>
+                      <Btn variant="outline" onClick={() => setEditingId(null)}>إلغاء</Btn>
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    {/* this month at a glance */}
+                    <div className="nm-well py-2.5 px-2 grid grid-cols-3 text-center">
+                      <div><p className="text-[10px] nm-mut">فواتير الشهر</p><p className="nm-num font-bold text-sm">{st.invoices}</p></div>
+                      <div className="border-x border-[var(--border)]"><p className="text-[10px] nm-mut">محصّل الشهر</p><p className="nm-num font-bold text-sm nm-ink">{fmt(st.collected)}</p></div>
+                      <div><p className="text-[10px] nm-mut">في حصته</p><p className="nm-num font-bold text-sm">{st.held} <span className="text-[10px] nm-mut font-medium">قطعة</span></p></div>
+                    </div>
+
+                    {/* stock-manager permission: a real switch, primary account only */}
+                    {currentUser.isPrimaryAdmin && !u.isPrimaryAdmin && (
+                      <button
+                        role="switch"
+                        aria-checked={!!u.canManageStock}
+                        onClick={() =>
+                          u.canManageStock
+                            ? onConfirm(`هل تريد سحب صلاحية "مسؤول المخزن" من ${u.name}؟ لن يتمكن بعدها من توزيع المخزون على البائعين.`, () => onToggleStockManager(u, false))
+                            : onToggleStockManager(u, true)
+                        }
+                        className="nm-well px-4 py-3 flex items-center gap-3 text-right"
+                      >
+                        <Boxes size={18} style={{ color: u.canManageStock ? "var(--due)" : "var(--muted)" }} />
+                        <span className="flex-1 min-w-0">
+                          <span className="block text-sm font-semibold">مسؤول المخزن</span>
+                          <span className="block text-[11px] nm-mut">{u.canManageStock ? "يوزّع المخزون على البائعين" : "يرى حصته فقط"}</span>
+                        </span>
+                        <span className={`nm-switch ${u.canManageStock ? "is-on" : ""}`} aria-hidden="true" />
+                      </button>
                     )}
-                  </p>
-                </div>
-                <div className="flex items-center gap-2">
-                  {currentUser.isPrimaryAdmin && !u.isPrimaryAdmin && (
-                    <button
-                      onClick={() =>
-                        u.canManageStock
-                          ? onConfirm(`هل تريد سحب صلاحية "مسؤول المخزن" من ${u.name}؟ لن يتمكن بعدها من توزيع المخزون على البائعين.`, () => onToggleStockManager(u, false))
-                          : onToggleStockManager(u, true)
-                      }
-                      title={u.canManageStock ? "سحب صلاحية مسؤول المخزن" : "منح صلاحية مسؤول المخزن"}
-                      className={`text-[11px] font-semibold px-2.5 py-1.5 rounded-lg inline-flex items-center gap-1 transition ${
-                        u.canManageStock
-                          ? "bg-[#C97B3D] text-white hover:brightness-95"
-                          : "bg-[var(--surface-3)] text-[var(--accent-dark)] hover:bg-[var(--border)]"
-                      }`}
-                    >
-                      <Boxes size={13} /> {u.canManageStock ? "مسؤول المخزن ✓" : "تعيين مسؤول مخزن"}
-                    </button>
-                  )}
-                  {(!u.isPrimaryAdmin || currentUser.id === u.id) && (
-                    <button onClick={() => startEdit(u)} className="p-2 rounded-lg text-[var(--accent-dark)] hover:bg-[var(--surface-3)]"><Pencil size={16} /></button>
-                  )}
-                  {!u.isPrimaryAdmin && (
-                    <button
-                      onClick={() => onConfirm(`هل تريد حذف المستخدم "${u.name}"؟ لا يمكن التراجع عن هذا الإجراء.`, () => onSave(users.filter((x) => x.id !== u.id)))}
-                      className="p-2 rounded-lg text-[#B23A3A] hover:bg-[#FBEAEA]"
-                    >
-                      <Trash2 size={16} />
-                    </button>
-                  )}
-                </div>
-              </div>
-            )}
-          </Card>
-        ))}
-      </div>
+
+                    {/* actions */}
+                    {canEdit || canDelete ? (
+                      <div className="flex justify-around gap-1">
+                        {canEdit && (
+                          <button className="nm-act" onClick={() => startEdit(u)}>
+                            <span className="nm-knob"><Pencil size={17} /></span>{isMe ? "تعديل بياناتي" : "تعديل"}
+                          </button>
+                        )}
+                        {canEdit && (
+                          <button className="nm-act" onClick={() => startEdit(u)}>
+                            <span className="nm-knob"><KeyRound size={17} /></span>كلمة المرور
+                          </button>
+                        )}
+                        {canDelete && (
+                          <button className="nm-act" onClick={() => onConfirm(`هل تريد حذف المستخدم "${u.name}"؟ لا يمكن التراجع عن هذا الإجراء.`, () => onSave(users.filter((x) => x.id !== u.id)))}>
+                            <span className="nm-knob danger"><Trash2 size={17} /></span>حذف
+                          </button>
+                        )}
+                      </div>
+                    ) : (
+                      <p className="text-[11px] nm-mut flex items-center justify-center gap-1.5"><ShieldCheck size={13} /> الحساب الأساسي محمي من التعديل والحذف</p>
+                    )}
+                  </>
+                )}
+              </Card>
+            );
+          })}
+        </div>
+      )}
     </div>
   );
 }
