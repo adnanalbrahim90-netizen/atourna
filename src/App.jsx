@@ -3940,16 +3940,108 @@ function CommentThread({ sale, isAdmin, onAddComment, onDeleteComment }) {
 
 /* ---------------------------------- Stats ---------------------------------- */
 
+// One compact control that scales from 3 sellers to hundreds: a single button
+// showing the current choice, opening a searchable list (bottom sheet on
+// phones, centered card on larger screens).
+function SellerPicker({ sellers, value, onChange, totals = [], label = "البائع" }) {
+  const [open, setOpen] = useState(false);
+  const [q, setQ] = useState("");
+  const current = value === "all" ? null : sellers.find((u) => u.id === value);
+  const totalOf = (id) => totals.find((t) => t.id === id)?.total || 0;
+  const term = q.trim().toLowerCase();
+  const shown = sellers
+    .filter((u) => !term || u.name.toLowerCase().includes(term) || (u.username || "").toLowerCase().includes(term))
+    .sort((x, y) => totalOf(y.id) - totalOf(x.id) || x.name.localeCompare(y.name, "ar"));
+  const pick = (id) => { onChange(id); setOpen(false); setQ(""); };
+
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e) => { if (e.key === "Escape") setOpen(false); };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [open]);
+
+  return (
+    <>
+      <button onClick={() => setOpen(true)} className="nm-out rounded-full px-4 py-2.5 flex items-center gap-3 text-right w-full" aria-haspopup="dialog" aria-expanded={open}>
+        <span className="nm-knob sm" style={{ boxShadow: "var(--nm-in-sm)" }} aria-hidden="true">
+          {current ? <span className="text-sm font-bold nm-ink">{current.name.trim().charAt(0)}</span> : <UsersIcon size={15} className="nm-ink" />}
+        </span>
+        <span className="flex-1 min-w-0">
+          <span className="block text-[10.5px] nm-mut leading-tight">{label}</span>
+          <span className="block text-sm font-bold truncate leading-tight">{current ? current.name : `كل البائعين (${sellers.length})`}</span>
+        </span>
+        {current && (
+          <span role="button" tabIndex={0} onClick={(e) => { e.stopPropagation(); onChange("all"); }} onKeyDown={(e) => { if (e.key === "Enter") { e.stopPropagation(); onChange("all"); } }} className="nm-knob sm" aria-label="إلغاء اختيار البائع"><X size={14} /></span>
+        )}
+        <ChevronDown size={16} className="nm-mut shrink-0" />
+      </button>
+
+      {open && (
+        <div className="fixed inset-0 z-[9000] flex items-end sm:items-center justify-center announce-backdrop" style={{ background: "rgba(30,38,50,.45)" }} dir="rtl" onClick={() => setOpen(false)}>
+          <div role="dialog" aria-modal="true" aria-label="اختيار البائع" onClick={(e) => e.stopPropagation()} className="w-full sm:max-w-md flex flex-col gap-3 p-4 announce-pop" style={{ background: "var(--bg)", borderRadius: "28px 28px 0 0", maxHeight: "82vh", paddingBottom: "calc(16px + env(safe-area-inset-bottom, 0px))", boxShadow: "0 -12px 40px rgba(20,28,40,.3)" }}>
+            <div className="flex items-center justify-between gap-3">
+              <h3 className="font-bold">اختيار البائع</h3>
+              <button onClick={() => setOpen(false)} className="nm-knob sm" aria-label="إغلاق"><X size={15} /></button>
+            </div>
+            <div className="relative">
+              <Search size={16} className="absolute right-4 top-1/2 -translate-y-1/2 text-[var(--muted)]" />
+              <input autoFocus className={inputCls + " pr-10 !rounded-full"} placeholder={`ابحث بالاسم بين ${sellers.length} بائعاً...`} value={q} onChange={(e) => setQ(e.target.value)} />
+            </div>
+            <div className="overflow-y-auto flex flex-col gap-2 px-1 pb-1" style={{ minHeight: 0, WebkitOverflowScrolling: "touch" }}>
+              {!term && (
+                <button onClick={() => pick("all")} className={`flex items-center gap-3 px-3 py-2.5 rounded-2xl text-right ${value === "all" ? "nm-in-sm" : ""}`}>
+                  <span className="nm-knob sm" style={{ boxShadow: "var(--nm-in-sm)" }}><UsersIcon size={15} className="nm-ink" /></span>
+                  <span className="flex-1 font-bold text-sm">كل البائعين</span>
+                  {value === "all" && <Check size={16} className="nm-ink" />}
+                </button>
+              )}
+              {shown.map((u) => (
+                <button key={u.id} onClick={() => pick(u.id)} className={`flex items-center gap-3 px-3 py-2.5 rounded-2xl text-right ${value === u.id ? "nm-in-sm" : ""}`}>
+                  <span className="nm-knob sm" style={{ boxShadow: "var(--nm-in-sm)" }}><span className="text-sm font-bold nm-ink">{u.name.trim().charAt(0)}</span></span>
+                  <span className="flex-1 min-w-0">
+                    <span className="block font-semibold text-sm truncate">{u.name}</span>
+                    <span className="block text-[11px] nm-mut">{u.role === "admin" ? "مدير" : "بائع"}</span>
+                  </span>
+                  <span className="nm-num text-xs font-semibold nm-mut shrink-0">{fmt(totalOf(u.id))}</span>
+                  {value === u.id && <Check size={16} className="nm-ink shrink-0" />}
+                </button>
+              ))}
+              {shown.length === 0 && <EmptyState text="لا يوجد بائع بهذا الاسم" />}
+            </div>
+          </div>
+        </div>
+      )}
+    </>
+  );
+}
+
 function Stats({ sales, users, products, currentUser, isAdmin, activeTheme }) {
   const [sellerFilter, setSellerFilter] = useState("all");
+  const [period, setPeriod] = useState("all"); // today | week | month | all
+  const [productMode, setProductMode] = useState("qty"); // qty | value
+  const [pickedDay, setPickedDay] = useState(null);
+  const [showAllSellers, setShowAllSellers] = useState(false);
   const sellers = users.filter((u) => u.role === "seller" || u.role === "admin");
 
-  let list = sales;
-  if (sellerFilter !== "all") list = list.filter((s) => s.sellerId === sellerFilter);
+  const startOfDay = (d) => { const x = new Date(d); x.setHours(0, 0, 0, 0); return x; };
+  const today0 = startOfDay(new Date());
+  const periodStart =
+    period === "today" ? today0
+    : period === "week" ? new Date(today0.getTime() - 6 * 86400000)
+    : period === "month" ? new Date(today0.getFullYear(), today0.getMonth(), 1)
+    : null;
+  const PERIODS = [["today", "اليوم"], ["week", "7 أيام"], ["month", "هذا الشهر"], ["all", "الكل"]];
+
+  const inPeriod = useMemo(() => (periodStart ? sales.filter((s) => new Date(s.date) >= periodStart) : sales), [sales, period]); // eslint-disable-line
+  const list = sellerFilter === "all" ? inPeriod : inPeriod.filter((s) => s.sellerId === sellerFilter);
 
   const totalRevenue = list.reduce((a, s) => a + s.total, 0);
   const totalCollected = list.reduce((a, s) => a + s.collected, 0);
   const totalRemaining = list.reduce((a, s) => a + s.remaining, 0);
+  const collectRate = totalRevenue > 0 ? (totalCollected / totalRevenue) * 100 : 0;
+  const avgInvoice = list.length ? totalRevenue / list.length : 0;
+  const unitsSold = list.reduce((a, s) => a + s.items.reduce((x, i) => x + i.qty, 0), 0);
 
   const costById = useMemo(() => {
     const m = new Map();
@@ -3964,86 +4056,229 @@ function Stats({ sales, users, products, currentUser, isAdmin, activeTheme }) {
       return sum + (s.total - saleCost);
     }, 0);
   }, [list, costById, isAdmin]);
+  const margin = totalRevenue > 0 ? (totalProfit / totalRevenue) * 100 : 0;
 
+  // Per-seller totals for the chosen period (ignores the seller filter so the
+  // comparison is always complete), split into collected and still-due.
   const bySeller = useMemo(() => {
     const map = new Map();
-    sales.forEach((s) => {
-      const cur = map.get(s.sellerName) || { name: s.sellerName, total: 0, count: 0 };
-      cur.total += s.total;
-      cur.count += 1;
-      map.set(s.sellerName, cur);
+    inPeriod.forEach((s) => {
+      const cur = map.get(s.sellerId) || { id: s.sellerId, name: s.sellerName, total: 0, collected: 0, remaining: 0, count: 0 };
+      cur.total += s.total; cur.collected += s.collected; cur.remaining += s.remaining; cur.count += 1;
+      map.set(s.sellerId, cur);
     });
-    return Array.from(map.values());
-  }, [sales]);
+    return Array.from(map.values()).sort((x, y) => y.total - x.total);
+  }, [inPeriod]);
+  const sellerMax = Math.max(1, ...bySeller.map((x) => x.total));
+  const sellersTotal = bySeller.reduce((a, x) => a + x.total, 0);
 
   const byProduct = useMemo(() => {
     const map = new Map();
     list.forEach((s) => s.items.forEach((i) => {
-      const cur = map.get(i.name) || { name: i.name, qty: 0 };
+      const cur = map.get(i.name) || { name: i.name, qty: 0, value: 0 };
       cur.qty += i.qty;
+      cur.value += i.total ?? i.qty * i.price;
       map.set(i.name, cur);
     }));
-    return Array.from(map.values()).sort((a, b) => b.qty - a.qty).slice(0, 6);
+    return Array.from(map.values());
   }, [list]);
+  const productKey = productMode === "qty" ? "qty" : "value";
+  const topProducts = [...byProduct].sort((x, y) => y[productKey] - x[productKey]).slice(0, 6);
+  const productMax = Math.max(1, ...topProducts.map((x) => x[productKey]));
+  const productTotal = byProduct.reduce((a, x) => a + x[productKey], 0);
+
+  // Daily totals: the last 7 days for "7 أيام", otherwise the last 14 days.
+  const dayCount = period === "week" ? 7 : 14;
+  const days = useMemo(() => {
+    const src = sellerFilter === "all" ? sales : sales.filter((s) => s.sellerId === sellerFilter);
+    const out = [];
+    for (let k = dayCount - 1; k >= 0; k--) {
+      const d0 = new Date(today0.getTime() - k * 86400000);
+      const d1 = new Date(d0.getTime() + 86400000);
+      const daySales = src.filter((s) => { const t = new Date(s.date); return t >= d0 && t < d1; });
+      out.push({ key: d0.toISOString().slice(0, 10), date: d0, total: daySales.reduce((a, s) => a + s.total, 0), count: daySales.length });
+    }
+    return out;
+  }, [sales, sellerFilter, dayCount]); // eslint-disable-line
+  const dayMax = Math.max(1, ...days.map((d) => d.total));
+  const bestDay = days.reduce((b, d) => (d.total > b.total ? d : b), days[0]);
+  const shownDay = days.find((d) => d.key === pickedDay) || (bestDay.total > 0 ? bestDay : days[days.length - 1]);
+  const dayName = (d) => d.toLocaleDateString("ar", { weekday: "long" });
+  const dayShort = (d) => `${d.getDate()}/${d.getMonth() + 1}`;
+
+  const noData = list.length === 0;
 
   return (
-    <div className="space-y-5">
-      <div className="flex items-center justify-between flex-wrap gap-2">
+    <div className="flex flex-col gap-5 max-w-5xl mx-auto nm-stats">
+      <style>{`
+        .nm-stats { --chart-1: #008C99; --chart-2: #C8782A; }
+        html.dark .nm-stats { --chart-1: #1C9AA3; --chart-2: #BE7C2C; }
+        .nm-bar { display: flex; gap: 2px; height: 14px; padding: 3px; border-radius: 99px; background: var(--bg); box-shadow: var(--nm-in-sm); }
+        .nm-bar > i { display: block; height: 8px; border-radius: 4px; min-width: 3px; transition: width .5s ease; }
+        .nm-bar > i:first-child { border-radius: 99px 4px 4px 99px; }
+        .nm-bar > i:last-child { border-radius: 4px 99px 99px 4px; }
+        .nm-bar > i:only-child { border-radius: 99px; }
+        .nm-key { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; color: var(--muted); }
+        .nm-key::before { content: ""; width: 10px; height: 10px; border-radius: 3px; background: var(--k); }
+        .nm-cols { display: flex; align-items: flex-end; gap: 4px; height: 120px; padding: 8px 8px 0; border-radius: 18px; background: var(--bg); box-shadow: var(--nm-in); }
+        .nm-cols > button { flex: 1; height: 100%; display: flex; align-items: flex-end; justify-content: center; padding: 0 1px; }
+        .nm-cols > button > i { display: block; width: 100%; max-width: 18px; border-radius: 4px 4px 0 0; background: color-mix(in srgb, var(--chart-1) 45%, var(--bg)); transition: height .5s ease, background .2s ease; }
+        .nm-cols > button.is-on > i, .nm-cols > button:hover > i { background: var(--chart-1); }
+        .nm-chips { display: flex; gap: 8px; overflow-x: auto; padding: 6px 2px 10px; margin: -6px -2px -10px; scrollbar-width: none; }
+        .nm-chips::-webkit-scrollbar { display: none; }
+        .nm-chip { flex: none; display: inline-flex; align-items: center; gap: 6px; padding: 7px 14px; border-radius: 99px; font-size: 12.5px; font-weight: 600; color: var(--muted); background: var(--bg); box-shadow: var(--nm-out-sm); white-space: nowrap; }
+        .nm-chip.is-on { color: var(--accent-ink); font-weight: 700; box-shadow: var(--nm-in-sm); }
+      `}</style>
+
+      <div>
         <h2 className="text-xl font-bold">إحصائيات المبيعات</h2>
-        <select className={inputCls + " sm:w-56"} value={sellerFilter} onChange={(e) => setSellerFilter(e.target.value)}>
-          <option value="all">كل البائعين</option>
-          {sellers.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
-        </select>
+        <p className="text-sm nm-mut">
+          {PERIODS.find(([k]) => k === period)[1]} · {sellerFilter === "all" ? "كل البائعين" : sellers.find((x) => x.id === sellerFilter)?.name}
+        </p>
       </div>
 
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <StatCard label="عدد الفواتير" value={list.length} color="var(--accent-dark)" icon={Receipt} themeKey={activeTheme} slot={0} />
-        <StatCard label="إجمالي المبيعات" value={fmt(totalRevenue) + " K.D"} color="var(--accent)" icon={TrendingUp} themeKey={activeTheme} slot={1} />
-        <StatCard label="المحصل" value={fmt(totalCollected) + " K.D"} color="#3F7D57" icon={Wallet} themeKey={activeTheme} slot={2} />
-        <StatCard label="المتبقي" value={fmt(totalRemaining) + " K.D"} color="#B23A3A" icon={AlertTriangle} themeKey={activeTheme} slot={3} />
+      {/* filters: one row for the period, one for who */}
+      <div className="flex flex-col gap-3">
+        <div className="nm-tog" role="tablist" aria-label="الفترة">
+          {PERIODS.map(([k, label]) => (
+            <button key={k} role="tab" aria-selected={period === k} className={period === k ? "is-on" : ""} onClick={() => { setPeriod(k); setPickedDay(null); }}>{label}</button>
+          ))}
+        </div>
+        <SellerPicker
+          sellers={sellers}
+          value={sellerFilter}
+          onChange={setSellerFilter}
+          totals={bySeller}
+        />
+      </div>
+
+      {/* headline: how much was sold and how much of it is actually in hand */}
+      <div className="grid md:grid-cols-2 gap-5 items-center">
+        <SoftDial value={fmt(totalRevenue)} pct={collectRate} label="إجمالي المبيعات" caption={noData ? "لا مبيعات في هذه الفترة" : `محصّل ${collectRate.toFixed(0)}٪`} />
+        <div className="grid grid-cols-2 gap-3">
+          <StatCard label="عدد الفواتير" value={list.length} icon={Receipt} />
+          <StatCard label="متوسط الفاتورة" value={fmt(avgInvoice)} unit="د.ك" icon={Calculator} />
+          <StatCard label="المحصّل" value={fmt(totalCollected)} unit="د.ك" icon={Wallet} tone="ink" />
+          <StatCard label="المتبقي" value={fmt(totalRemaining)} unit="د.ك" icon={AlertTriangle} tone={totalRemaining > 0 ? "due" : undefined} />
+        </div>
       </div>
 
       {isAdmin && (
-        <Card className="p-4 text-center">
-          <p className="text-xs text-[var(--muted)] mb-1">صافي الربح (بعد خصم سعر التكلفة)</p>
-          <p dir="ltr" className={`text-xl sm:text-2xl font-extrabold whitespace-nowrap ${totalProfit >= 0 ? "text-[#3F7D57]" : "text-[#B23A3A]"}`}>{fmt(totalProfit)} K.D</p>
-          <p className="text-xs text-[var(--muted)] mt-1">مرئي للمدير فقط — بناءً على سعر التكلفة المسجَّل لكل منتج</p>
+        <Card className="p-4 flex flex-col gap-3">
+          <div className="flex items-start justify-between gap-3">
+            <div>
+              <p className="text-xs nm-mut">صافي الربح (بعد خصم سعر التكلفة)</p>
+              <p className={`nm-num text-2xl font-bold text-right ${totalProfit >= 0 ? "text-[var(--ok)]" : "text-[var(--bad)]"}`}>{fmt(totalProfit)} <span className="text-xs font-medium nm-mut">د.ك</span></p>
+            </div>
+            <div className="nm-well px-3 py-2 text-center shrink-0">
+              <p className="nm-num text-lg font-bold leading-none">{margin.toFixed(0)}٪</p>
+              <p className="text-[10px] nm-mut mt-1">هامش الربح</p>
+            </div>
+          </div>
+          <div className="nm-groove" role="img" aria-label={`هامش الربح ${margin.toFixed(0)}٪ من المبيعات`}><span style={{ width: `${Math.max(0, Math.min(100, margin))}%`, background: "var(--ok)" }} /></div>
+          <p className="text-[11px] nm-mut flex items-center gap-1.5"><ShieldCheck size={13} /> مرئي للمدير فقط · بناءً على سعر التكلفة المسجَّل لكل منتج · {unitsSold} قطعة مباعة</p>
         </Card>
       )}
 
-      {sellerFilter === "all" && bySeller.length > 0 && (
-        <Card className="p-4">
-          <h3 className="font-bold mb-3">مبيعات كل بائع</h3>
-          <div style={{ width: "100%", height: 260 }}>
-            <ResponsiveContainer>
-              <BarChart data={bySeller}>
-                <CartesianGrid strokeDasharray="3 3" stroke="#F0E6D0" />
-                <XAxis dataKey="name" tick={{ fontSize: 12 }} />
-                <YAxis tick={{ fontSize: 12 }} />
-                <Tooltip formatter={(v) => fmt(v) + " K.D"} />
-                <Bar dataKey="total" fill="var(--accent)" radius={[6, 6, 0, 0]} />
-              </BarChart>
-            </ResponsiveContainer>
+      {/* daily trend */}
+      {period !== "today" && (
+        <Card className="p-4 flex flex-col gap-3">
+          <div className="flex items-baseline justify-between gap-3">
+            <h3 className="font-bold">المبيعات اليومية</h3>
+            <span className="text-xs nm-mut">{dayCount === 7 ? "آخر 7 أيام" : "آخر 14 يوماً"}</span>
+          </div>
+          <div className="flex items-end justify-between gap-3">
+            <div>
+              <p className="text-xs nm-mut">{dayName(shownDay.date)} {dayShort(shownDay.date)}{shownDay.key === bestDay.key && bestDay.total > 0 ? " · أفضل يوم" : ""}</p>
+              <p className="nm-num text-xl font-bold text-right">{fmt(shownDay.total)} <span className="text-xs font-medium nm-mut">د.ك</span></p>
+            </div>
+            <p className="text-xs nm-mut">{shownDay.count} فاتورة</p>
+          </div>
+          <div className="nm-cols" role="group" aria-label="مبيعات كل يوم، اضغط على عمود لعرض قيمته">
+            {days.map((d) => (
+              <button key={d.key} className={d.key === shownDay.key ? "is-on" : ""} onClick={() => setPickedDay(d.key)} title={`${dayName(d.date)} ${dayShort(d.date)} — ${fmt(d.total)} د.ك`} aria-label={`${dayName(d.date)} ${dayShort(d.date)}: ${fmt(d.total)} دينار، ${d.count} فاتورة`}>
+                <i style={{ height: `${d.total > 0 ? Math.max(4, (d.total / dayMax) * 100) : 2}%` }} />
+              </button>
+            ))}
+          </div>
+          <div className="flex justify-between text-[10.5px] nm-mut px-1">
+            <span className="nm-num">{dayShort(days[0].date)}</span>
+            <span>اضغط على أي عمود لعرض قيمته</span>
+            <span>اليوم</span>
           </div>
         </Card>
       )}
 
-      {byProduct.length > 0 && (
-        <Card className="p-4">
-          <h3 className="font-bold mb-3">الأكثر مبيعاً</h3>
-          <div style={{ width: "100%", height: 260 }}>
-            <ResponsiveContainer>
-              <PieChart>
-                <Pie data={byProduct} dataKey="qty" nameKey="name" outerRadius={90} label={(e) => e.name}>
-                  {byProduct.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
-                </Pie>
-                <Tooltip />
-                <Legend />
-              </PieChart>
-            </ResponsiveContainer>
+      {/* sellers: horizontal bars, name and value on the row itself — nothing to overlap */}
+      {sellerFilter === "all" && (
+        <Card className="p-4 flex flex-col gap-4">
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <h3 className="font-bold">{bySeller.length > 5 && !showAllSellers ? "أعلى 5 بائعين" : "مبيعات كل بائع"}</h3>
+            <div className="flex items-center gap-3">
+              <span className="nm-key" style={{ "--k": "var(--chart-1)" }}>محصّل</span>
+              <span className="nm-key" style={{ "--k": "var(--chart-2)" }}>متبقٍ</span>
+            </div>
           </div>
+          {bySeller.length === 0 ? (
+            <EmptyState text="لا مبيعات في هذه الفترة" />
+          ) : (
+            (showAllSellers ? bySeller : bySeller.slice(0, 5)).map((x, i) => (
+              <button key={x.id} onClick={() => setSellerFilter(x.id)} className="text-right flex flex-col gap-2" title={`عرض إحصائيات ${x.name}`}>
+                <span className="flex items-center gap-3">
+                  <span className="nm-knob sm" style={{ boxShadow: "var(--nm-in-sm)" }} aria-hidden="true"><span className="nm-num text-xs font-bold nm-mut">{i + 1}</span></span>
+                  <span className="flex-1 min-w-0">
+                    <span className="block font-bold text-sm truncate">{x.name}</span>
+                    <span className="block text-[11px] nm-mut">{x.count} فاتورة · {sellersTotal > 0 ? ((x.total / sellersTotal) * 100).toFixed(0) : 0}٪ من المبيعات</span>
+                  </span>
+                  <span className="text-left shrink-0">
+                    <span className="block nm-num font-bold text-sm">{fmt(x.total)}</span>
+                    {x.remaining > 0 && <span className="block nm-num text-[11px] text-[var(--due)]">متبقٍ {fmt(x.remaining)}</span>}
+                  </span>
+                </span>
+                <span className="nm-bar" style={{ width: `${Math.max(12, (x.total / sellerMax) * 100)}%` }} role="img" aria-label={`${x.name}: محصّل ${fmt(x.collected)}، متبقٍ ${fmt(x.remaining)}`}>
+                  {x.collected > 0 && <i style={{ width: `${(x.collected / x.total) * 100}%`, background: "var(--chart-1)" }} />}
+                  {x.remaining > 0 && <i style={{ width: `${(x.remaining / x.total) * 100}%`, background: "var(--chart-2)" }} />}
+                </span>
+              </button>
+            ))
+          )}
+          {bySeller.length > 5 && (
+            <button onClick={() => setShowAllSellers((v) => !v)} className="nm-btn ink self-center !py-2 !px-4 text-[13px]">
+              {showAllSellers ? "عرض أعلى 5 فقط" : `عرض كل البائعين (${bySeller.length})`}
+            </button>
+          )}
         </Card>
       )}
+
+      {/* best sellers: ranked bars instead of a pie whose labels collided */}
+      <Card className="p-4 flex flex-col gap-4">
+        <div className="flex items-center justify-between gap-3">
+          <h3 className="font-bold">الأكثر مبيعاً</h3>
+          <div className="nm-tog !p-1" role="radiogroup" aria-label="طريقة الترتيب">
+            <button role="radio" aria-checked={productMode === "qty"} className={`!px-3 !py-1.5 !text-[11.5px] ${productMode === "qty" ? "is-on" : ""}`} onClick={() => setProductMode("qty")}>بالعدد</button>
+            <button role="radio" aria-checked={productMode === "value"} className={`!px-3 !py-1.5 !text-[11.5px] ${productMode === "value" ? "is-on" : ""}`} onClick={() => setProductMode("value")}>بالقيمة</button>
+          </div>
+        </div>
+        {topProducts.length === 0 ? (
+          <EmptyState text="لا مبيعات في هذه الفترة" />
+        ) : (
+          topProducts.map((x, i) => (
+            <div key={x.name} className="flex flex-col gap-2">
+              <div className="flex items-center gap-3">
+                <span className="nm-knob sm" style={{ boxShadow: "var(--nm-in-sm)" }} aria-hidden="true"><span className="nm-num text-xs font-bold nm-mut">{i + 1}</span></span>
+                <span className="flex-1 min-w-0 font-bold text-sm truncate">{x.name}</span>
+                <span className="text-left shrink-0">
+                  <span className="block nm-num font-bold text-sm">{productMode === "qty" ? x.qty : fmt(x.value)} <span className="text-[10px] font-medium nm-mut">{productMode === "qty" ? "قطعة" : "د.ك"}</span></span>
+                  <span className="block nm-num text-[11px] nm-mut">{productTotal > 0 ? ((x[productKey] / productTotal) * 100).toFixed(0) : 0}٪</span>
+                </span>
+              </div>
+              <span className="nm-bar" style={{ width: `${Math.max(12, (x[productKey] / productMax) * 100)}%` }} role="img" aria-label={`${x.name}: ${productMode === "qty" ? `${x.qty} قطعة` : `${fmt(x.value)} دينار`}`}>
+                <i style={{ width: "100%", background: "var(--chart-1)" }} />
+              </span>
+            </div>
+          ))
+        )}
+      </Card>
     </div>
   );
 }
@@ -4379,6 +4614,7 @@ function UsersAdmin({ users, onSave, onConfirm, currentUser, onToggleStockManage
   const [showPass, setShowPass] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
   const [roleFilter, setRoleFilter] = useState("all"); // all | admin | seller
+  const [userSearch, setUserSearch] = useState("");
   const [formError, setFormError] = useState("");
   const [editError, setEditError] = useState("");
 
@@ -4436,8 +4672,10 @@ function UsersAdmin({ users, onSave, onConfirm, currentUser, onToggleStockManage
     };
   };
   const AVATAR_COLORS = ["#2F7F86", "#6A4AA0", "#B24A63", "#9A6420", "#2F5E9A", "#3E8A73"];
+  const userTerm = userSearch.trim().toLowerCase();
   const shown = users
     .filter((u) => roleFilter === "all" || (roleFilter === "admin" ? u.role === "admin" : u.role !== "admin"))
+    .filter((u) => !userTerm || u.name.toLowerCase().includes(userTerm) || (u.username || "").toLowerCase().includes(userTerm))
     // primary first, then admins, then sellers — a stable, predictable order
     .sort((x, y) => (y.isPrimaryAdmin ? 1 : 0) - (x.isPrimaryAdmin ? 1 : 0) || (y.role === "admin" ? 1 : 0) - (x.role === "admin" ? 1 : 0));
 
@@ -4492,6 +4730,11 @@ function UsersAdmin({ users, onSave, onConfirm, currentUser, onToggleStockManage
         </Card>
       )}
 
+      <div className="relative">
+        <Search size={16} className="absolute right-4 top-1/2 -translate-y-1/2 text-[var(--muted)]" />
+        <input className={inputCls + " pr-10 !rounded-full"} placeholder="بحث بالاسم أو اسم المستخدم..." value={userSearch} onChange={(e) => setUserSearch(e.target.value)} aria-label="بحث في المستخدمين" />
+      </div>
+
       <div className="flex items-center gap-3">
         <div className="nm-tog flex-1" role="tablist" aria-label="تصفية حسب الدور">
           <button role="tab" aria-selected={roleFilter === "all"} className={roleFilter === "all" ? "is-on" : ""} onClick={() => setRoleFilter("all")}>الكل <span className="nm-num text-[11px] nm-mut">{users.length}</span></button>
@@ -4511,7 +4754,7 @@ function UsersAdmin({ users, onSave, onConfirm, currentUser, onToggleStockManage
       )}
 
       {shown.length === 0 ? (
-        <div className="nm-well p-6"><EmptyState text="لا توجد حسابات بهذا الدور" /></div>
+        <div className="nm-well p-6"><EmptyState text={userTerm ? "لا يوجد مستخدم بهذا الاسم" : "لا توجد حسابات بهذا الدور"} /></div>
       ) : (
         <div className="grid md:grid-cols-2 gap-5">
           {shown.map((u) => {
