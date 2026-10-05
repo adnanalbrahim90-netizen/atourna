@@ -5728,17 +5728,42 @@ const EXPENSE_CATEGORIES = [
   "أخرى",
 ];
 
+// Icon + short label for each expense type (the stored value stays the full
+// category name, so old records and the accounting page are unaffected).
+const EXPENSE_META = {
+  "شراء بضاعة": { icon: Package, short: "بضاعة" },
+  "إيجار": { icon: Home, short: "إيجار" },
+  "رواتب": { icon: UsersIcon, short: "رواتب" },
+  "فواتير (كهرباء / ماء / إنترنت)": { icon: ScrollText, short: "فواتير" },
+  "صيانة": { icon: SettingsIcon, short: "صيانة" },
+  "تسويق وإعلانات": { icon: Megaphone, short: "تسويق" },
+  "نثريات": { icon: Wallet, short: "نثريات" },
+  "أخرى": { icon: Tag, short: "أخرى" },
+};
+const expenseMeta = (c) => EXPENSE_META[c] || { icon: Tag, short: c };
+// Local calendar date as yyyy-mm-dd (toISOString() is UTC and gave yesterday's
+// date for anything recorded between midnight and 3am Kuwait time).
+const localYMD = (d = new Date()) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+
 function ExpensesPage({ expenses, onAdd, onDelete, onConfirm, activeTheme }) {
+  const todayStr = localYMD();
+  const yesterdayStr = localYMD(new Date(Date.now() - 86400000));
   const [category, setCategory] = useState(EXPENSE_CATEGORIES[0]);
   const [description, setDescription] = useState("");
   const [amount, setAmount] = useState("");
-  const [date, setDate] = useState(() => new Date().toISOString().slice(0, 10));
+  const [date, setDate] = useState(todayStr);
+  const [customDate, setCustomDate] = useState(false);
+  const [showForm, setShowForm] = useState(false);
+  const [formError, setFormError] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("all");
+  const [period, setPeriod] = useState("all"); // month | last | all
   const [search, setSearch] = useState("");
+  const [showCount, setShowCount] = useState(20);
+  const [pickOpen, setPickOpen] = useState(false);
 
   const submit = () => {
     const amt = Number(amount);
-    if (!amt || amt <= 0) return;
+    if (!amt || amt <= 0) { setFormError("اكتب مبلغ المصروف أولاً"); return; }
     onAdd({
       category,
       description,
@@ -5747,90 +5772,230 @@ function ExpensesPage({ expenses, onAdd, onDelete, onConfirm, activeTheme }) {
     });
     setDescription("");
     setAmount("");
+    setFormError("");
+    setShowForm(false);
   };
 
-  let list = expenses;
+  const now = new Date();
+  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+  const lastStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  const sum = (arr) => arr.reduce((a, e) => a + e.amount, 0);
+  const thisMonthTotal = sum(expenses.filter((e) => new Date(e.date) >= monthStart));
+  const lastMonthTotal = sum(expenses.filter((e) => { const d = new Date(e.date); return d >= lastStart && d < monthStart; }));
+
+  const inPeriod = expenses.filter((e) => {
+    if (period === "all") return true;
+    const d = new Date(e.date);
+    return period === "month" ? d >= monthStart : d >= lastStart && d < monthStart;
+  });
+  const catTotals = EXPENSE_CATEGORIES.map((c) => {
+    const rows = inPeriod.filter((e) => e.category === c);
+    return { name: c, total: sum(rows), count: rows.length };
+  });
+
+  let list = inPeriod;
   if (categoryFilter !== "all") list = list.filter((e) => e.category === categoryFilter);
   if (search.trim()) {
     const q = search.trim().toLowerCase();
-    list = list.filter((e) => e.description.toLowerCase().includes(q));
+    list = list.filter((e) => (e.description || "").toLowerCase().includes(q) || e.category.toLowerCase().includes(q));
   }
+  list = [...list].sort((x, y) => new Date(y.date) - new Date(x.date));
+  const total = sum(list);
 
-  const total = list.reduce((a, e) => a + e.amount, 0);
-  const now = new Date();
-  const thisMonthTotal = expenses
-    .filter((e) => {
-      const d = new Date(e.date);
-      return d.getMonth() === now.getMonth() && d.getFullYear() === now.getFullYear();
-    })
-    .reduce((a, e) => a + e.amount, 0);
+  // group the visible rows by month so long histories stay readable
+  const visible = list.slice(0, showCount);
+  const groups = [];
+  visible.forEach((e) => {
+    const d = new Date(e.date);
+    const key = `${d.getFullYear()}-${d.getMonth()}`;
+    let g = groups[groups.length - 1];
+    if (!g || g.key !== key) { g = { key, label: d.toLocaleDateString("ar", { month: "long", year: "numeric" }), rows: [] }; groups.push(g); }
+    g.rows.push(e);
+  });
+  const monthTotalOf = (key) => sum(list.filter((e) => { const d = new Date(e.date); return `${d.getFullYear()}-${d.getMonth()}` === key; }));
+
+  const CurIcon = categoryFilter === "all" ? Wallet2 : expenseMeta(categoryFilter).icon;
 
   return (
-    <div className="space-y-5">
-      <h2 className="text-xl font-bold flex items-center gap-2"><Wallet2 size={20} /> المصروفات</h2>
-
-      <div className="grid grid-cols-2 gap-3">
-        <StatCard label="إجمالي المصروفات" value={fmt(total) + " K.D"} color="#B23A3A" icon={Wallet2} themeKey={activeTheme} slot={0} />
-        <StatCard label="مصروفات هذا الشهر" value={fmt(thisMonthTotal) + " K.D"} color="var(--accent)" icon={CalendarRange} themeKey={activeTheme} slot={1} />
+    <div className="flex flex-col gap-5 max-w-3xl mx-auto">
+      <div className="flex items-center justify-between gap-3">
+        <div className="min-w-0">
+          <h2 className="text-xl font-bold">المصروفات</h2>
+          <p className="text-sm nm-mut">{expenses.length} مصروف مسجّل</p>
+        </div>
+        {!showForm && (
+          <Btn className="!py-2.5 !px-4 text-[13px] shrink-0" onClick={() => { setShowForm(true); setFormError(""); }}><Plus size={16} /> مصروف جديد</Btn>
+        )}
       </div>
 
-      <Card className="p-4 space-y-3">
-        <h3 className="font-bold">تسجيل مصروف جديد</h3>
-        <div className="grid grid-cols-2 gap-3">
-          <Field label="نوع المصروف">
-            <select className={inputCls} value={category} onChange={(e) => setCategory(e.target.value)}>
-              {EXPENSE_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
-            </select>
-          </Field>
-          <Field label="المبلغ (K.D)">
-            <input type="number" min="0" step="0.001" className={inputCls} value={amount} onChange={(e) => setAmount(e.target.value)} />
-          </Field>
-          <div className="col-span-2">
-            <Field label="الوصف / التفاصيل">
-              <input className={inputCls} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="مثال: شراء عود من المورد الفلاني" />
-            </Field>
+      {showForm && (
+        <Card className="p-4 flex flex-col gap-4 fade-in">
+          <div className="flex items-center justify-between">
+            <h3 className="font-bold">تسجيل مصروف جديد</h3>
+            <button onClick={() => { setShowForm(false); setFormError(""); }} className="nm-knob sm" aria-label="إغلاق"><X size={15} /></button>
           </div>
-          <Field label="التاريخ">
-            <input type="date" className={inputCls} value={date} onChange={(e) => setDate(e.target.value)} />
-          </Field>
-        </div>
-        <Btn onClick={submit} className="w-full"><Plus size={16} /> تسجيل المصروف</Btn>
-      </Card>
 
-      <div className="flex flex-col sm:flex-row gap-2">
-        <select className={inputCls + " sm:w-56"} value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value)}>
-          <option value="all">كل الأنواع</option>
-          {EXPENSE_CATEGORIES.map((c) => <option key={c} value={c}>{c}</option>)}
-        </select>
-        <div className="relative flex-1">
-          <Search size={16} className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--muted)]" />
-          <input className={inputCls + " pr-9"} placeholder="بحث في الوصف..." value={search} onChange={(e) => setSearch(e.target.value)} />
+          {/* 1 — the amount, big and first */}
+          <label className="nm-well px-4 py-3 flex items-center gap-3">
+            <span className="text-xs nm-mut shrink-0">المبلغ</span>
+            <input
+              autoFocus
+              type="number"
+              inputMode="decimal"
+              min="0"
+              step="0.001"
+              dir="ltr"
+              className="flex-1 min-w-0 bg-transparent outline-none text-right text-[28px] font-bold nm-num"
+              placeholder="0.000"
+              value={amount}
+              onChange={(e) => { setAmount(e.target.value); setFormError(""); }}
+              aria-label="المبلغ بالدينار"
+            />
+            <span className="text-sm font-semibold nm-mut shrink-0">د.ك</span>
+          </label>
+
+          {/* 2 — the type, by icon */}
+          <div>
+            <span className="block text-xs font-semibold text-[var(--muted)] mb-2">نوع المصروف</span>
+            <div className="grid grid-cols-4 gap-y-4 gap-x-1 justify-items-center" role="radiogroup" aria-label="نوع المصروف">
+              {EXPENSE_CATEGORIES.map((c) => {
+                const m = expenseMeta(c);
+                const Icon = m.icon;
+                const on = category === c;
+                return (
+                  <button key={c} type="button" role="radio" aria-checked={on} title={c} onClick={() => setCategory(c)} className="nm-act" style={on ? { color: "var(--accent-ink)", fontWeight: 700 } : undefined}>
+                    <span className={`nm-knob lg ${on ? "is-on" : ""}`}><Icon size={20} /></span>
+                    {m.short}
+                  </button>
+                );
+              })}
+            </div>
+            <p className="text-[11px] nm-mut mt-2 text-center">{category}</p>
+          </div>
+
+          {/* 3 — when */}
+          <div>
+            <span className="block text-xs font-semibold text-[var(--muted)] mb-1">التاريخ</span>
+            <div className="nm-tog" role="radiogroup" aria-label="التاريخ">
+              <button type="button" role="radio" aria-checked={!customDate && date === todayStr} className={!customDate && date === todayStr ? "is-on" : ""} onClick={() => { setDate(todayStr); setCustomDate(false); }}>اليوم</button>
+              <button type="button" role="radio" aria-checked={!customDate && date === yesterdayStr} className={!customDate && date === yesterdayStr ? "is-on" : ""} onClick={() => { setDate(yesterdayStr); setCustomDate(false); }}>أمس</button>
+              <button type="button" role="radio" aria-checked={customDate} className={customDate ? "is-on" : ""} onClick={() => setCustomDate(true)}><CalendarRange size={14} /> تاريخ آخر</button>
+            </div>
+            {customDate && (
+              <input type="date" dir="ltr" max={todayStr} className={inputCls + " mt-3 text-right"} style={{ minHeight: 44 }} value={date} onChange={(e) => setDate(e.target.value || todayStr)} aria-label="اختر التاريخ" />
+            )}
+          </div>
+
+          {/* 4 — optional note */}
+          <Field label="الوصف / التفاصيل (اختياري)">
+            <input className={inputCls} value={description} onChange={(e) => setDescription(e.target.value)} placeholder="مثال: شراء عود من المورد الفلاني" />
+          </Field>
+
+          {formError && <p className="text-xs font-semibold text-[var(--bad)] flex items-center gap-1.5" role="alert"><AlertTriangle size={14} /> {formError}</p>}
+          <Btn onClick={submit} className="w-full">
+            <Check size={16} /> تسجيل المصروف{Number(amount) > 0 ? ` · ${fmt(Number(amount))} د.ك` : ""}
+          </Btn>
+        </Card>
+      )}
+
+      <div className="nm-well px-2 py-3 grid grid-cols-3 text-center" aria-label="ملخص المصروفات">
+        <div><p className="text-[10.5px] nm-mut">هذا الشهر</p><p className="nm-num font-bold text-[var(--bad)]">{fmt(thisMonthTotal)}</p></div>
+        <div className="border-x border-[var(--border)]"><p className="text-[10.5px] nm-mut">الشهر الماضي</p><p className="nm-num font-bold">{fmt(lastMonthTotal)}</p></div>
+        <div><p className="text-[10.5px] nm-mut">كل المصروفات</p><p className="nm-num font-bold">{fmt(sum(expenses))}</p></div>
+      </div>
+
+      {/* filters */}
+      <div className="flex flex-col gap-3">
+        <div className="nm-tog" role="tablist" aria-label="الفترة">
+          {[["month", "هذا الشهر"], ["last", "الشهر الماضي"], ["all", "الكل"]].map(([k, label]) => (
+            <button key={k} role="tab" aria-selected={period === k} className={period === k ? "is-on" : ""} onClick={() => { setPeriod(k); setShowCount(20); }}>{label}</button>
+          ))}
         </div>
+        <button onClick={() => setPickOpen(true)} className="nm-out rounded-full px-4 py-2.5 flex items-center gap-3 text-right w-full" aria-haspopup="dialog" aria-expanded={pickOpen}>
+          <span className="nm-knob sm" style={{ boxShadow: "var(--nm-in-sm)" }} aria-hidden="true"><CurIcon size={15} className="nm-ink" /></span>
+          <span className="flex-1 min-w-0">
+            <span className="block text-[10.5px] nm-mut leading-tight">نوع المصروف</span>
+            <span className="block text-sm font-bold truncate leading-tight">{categoryFilter === "all" ? "كل الأنواع" : categoryFilter}</span>
+          </span>
+          {categoryFilter !== "all" && (
+            <span role="button" tabIndex={0} onClick={(e) => { e.stopPropagation(); setCategoryFilter("all"); }} onKeyDown={(e) => { if (e.key === "Enter") { e.stopPropagation(); setCategoryFilter("all"); } }} className="nm-knob sm" aria-label="إلغاء تصفية النوع"><X size={14} /></span>
+          )}
+          <ChevronDown size={16} className="nm-mut shrink-0" />
+        </button>
+        <div className="relative">
+          <Search size={16} className="absolute right-4 top-1/2 -translate-y-1/2 text-[var(--muted)]" />
+          <input className={inputCls + " pr-10 !rounded-full"} placeholder="بحث في الوصف..." value={search} onChange={(e) => { setSearch(e.target.value); setShowCount(20); }} />
+        </div>
+      </div>
+
+      {pickOpen && (
+        <div className="fixed inset-0 z-[9000] flex items-end sm:items-center justify-center announce-backdrop" style={{ background: "rgba(30,38,50,.45)" }} dir="rtl" onClick={() => setPickOpen(false)}>
+          <div role="dialog" aria-modal="true" aria-label="تصفية حسب نوع المصروف" onClick={(e) => e.stopPropagation()} className="w-full sm:max-w-md flex flex-col gap-3 p-4 announce-pop" style={{ background: "var(--bg)", borderRadius: "28px 28px 0 0", maxHeight: "82vh", paddingBottom: "calc(16px + env(safe-area-inset-bottom, 0px))", boxShadow: "0 -12px 40px rgba(20,28,40,.3)" }}>
+            <div className="flex items-center justify-between gap-3">
+              <h3 className="font-bold">نوع المصروف</h3>
+              <button onClick={() => setPickOpen(false)} className="nm-knob sm" aria-label="إغلاق"><X size={15} /></button>
+            </div>
+            <div className="overflow-y-auto flex flex-col gap-1 px-1 pb-1" style={{ minHeight: 0 }}>
+              <button onClick={() => { setCategoryFilter("all"); setPickOpen(false); setShowCount(20); }} className={`flex items-center gap-3 px-3 py-2.5 rounded-2xl text-right ${categoryFilter === "all" ? "nm-in-sm" : ""}`}>
+                <span className="nm-knob sm" style={{ boxShadow: "var(--nm-in-sm)" }}><Wallet2 size={15} className="nm-ink" /></span>
+                <span className="flex-1 font-bold text-sm">كل الأنواع</span>
+                <span className="nm-num text-xs font-semibold nm-mut">{fmt(sum(inPeriod))}</span>
+                {categoryFilter === "all" && <Check size={16} className="nm-ink" />}
+              </button>
+              {catTotals.map((c) => {
+                const Icon = expenseMeta(c.name).icon;
+                return (
+                  <button key={c.name} onClick={() => { setCategoryFilter(c.name); setPickOpen(false); setShowCount(20); }} className={`flex items-center gap-3 px-3 py-2.5 rounded-2xl text-right ${categoryFilter === c.name ? "nm-in-sm" : ""}`}>
+                    <span className="nm-knob sm" style={{ boxShadow: "var(--nm-in-sm)" }}><Icon size={15} className="nm-ink" /></span>
+                    <span className="flex-1 min-w-0">
+                      <span className="block font-semibold text-sm truncate">{c.name}</span>
+                      <span className="block text-[11px] nm-mut">{c.count} مصروف</span>
+                    </span>
+                    <span className="nm-num text-xs font-semibold nm-mut shrink-0">{fmt(c.total)}</span>
+                    {categoryFilter === c.name && <Check size={16} className="nm-ink shrink-0" />}
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div className="flex items-baseline justify-between gap-3">
+        <h3 className="font-bold text-[15px]">السجل</h3>
+        <p className="text-xs nm-mut">{list.length} مصروف · <span className="nm-num font-bold text-[var(--bad)]">{fmt(total)}</span> د.ك</p>
       </div>
 
       {list.length === 0 ? (
-        <Card className="p-8"><EmptyState text="لا توجد مصروفات مطابقة" /></Card>
+        <div className="nm-well p-8"><EmptyState text={expenses.length === 0 ? "لا توجد مصروفات مسجّلة بعد" : "لا توجد مصروفات مطابقة"} /></div>
       ) : (
-        <div className="space-y-2">
-          {list.map((e) => (
-            <Card key={e.id} className="p-3 flex items-center justify-between card-hover">
-              <div>
-                <p className="text-sm font-semibold">{e.category}</p>
-                {e.description && <p className="text-xs text-[var(--muted)]">{e.description}</p>}
-                <p className="text-[11px] text-[var(--muted)]">{e.byUserName} · {dateLabel(e.date)}</p>
-              </div>
-              <div className="flex items-center gap-3">
-                <p className="font-bold text-[#B23A3A]">{fmt(e.amount)} K.D</p>
-                <button
-                  onClick={() => onConfirm("هل تريد حذف هذا المصروف؟", () => onDelete(e.id))}
-                  className="p-1.5 rounded-lg text-[#B23A3A] hover:bg-[#FBEAEA]"
-                >
-                  <Trash2 size={15} />
-                </button>
-              </div>
-            </Card>
-          ))}
-        </div>
+        groups.map((g) => (
+          <section key={g.key} className="flex flex-col gap-2" aria-label={g.label}>
+            <div className="flex items-baseline justify-between px-2">
+              <span className="text-xs font-bold nm-mut">{g.label}</span>
+              <span className="nm-num text-xs font-semibold nm-mut">{fmt(monthTotalOf(g.key))}</span>
+            </div>
+            <div className="nm-card px-4 py-1">
+              {g.rows.map((e, i) => {
+                const Icon = expenseMeta(e.category).icon;
+                return (
+                  <div key={e.id} className={`flex items-center gap-3 py-3 ${i ? "border-t border-[var(--border)]" : ""}`}>
+                    <span className="nm-knob sm" style={{ boxShadow: "var(--nm-in-sm)" }} aria-hidden="true"><Icon size={15} className="nm-ink" /></span>
+                    <div className="flex-1 min-w-0">
+                      <p className="text-sm font-semibold truncate">{e.description || e.category}</p>
+                      <p className="text-[11px] nm-mut truncate">{e.description ? `${expenseMeta(e.category).short} · ` : ""}{e.byUserName} · {dateLabel(e.date)}</p>
+                    </div>
+                    <p className="nm-num font-bold text-sm text-[var(--bad)] shrink-0">{fmt(e.amount)}</p>
+                    <button onClick={() => onConfirm("هل تريد حذف هذا المصروف؟", () => onDelete(e.id))} className="nm-knob sm danger" aria-label={`حذف مصروف ${e.category}`}><Trash2 size={14} /></button>
+                  </div>
+                );
+              })}
+            </div>
+          </section>
+        ))
+      )}
+      {list.length > showCount && (
+        <button onClick={() => setShowCount((n) => n + 20)} className="nm-btn ink self-center !py-2 !px-4 text-[13px]">عرض المزيد ({list.length - showCount} باقي)</button>
       )}
     </div>
   );
