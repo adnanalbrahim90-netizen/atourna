@@ -2752,6 +2752,20 @@ function GlobalStyle() {
       .nm-fab > span:last-child { font-size: 11.5px; font-weight: 700; color: var(--accent-ink); }
       .nm-fabfade { position: fixed; left: 0; right: 0; bottom: 0; height: 110px; z-index: 30; pointer-events: none; background: linear-gradient(to top, var(--bg) 45%, transparent); }
 
+      /* ---------- charts (shared): validated colours, thin bars in a sunk track ---------- */
+      :root { --chart-1: #008C99; --chart-2: #C8782A; --c-cogs: #4E6FAE; --c-exp: #C8782A; --c-waste: #7E3B78; --c-net: #008C99; }
+      html.dark { --chart-1: #1C9AA3; --chart-2: #BE7C2C; --c-cogs: #7090DC; --c-exp: #BE7C2C; --c-waste: #A05A98; --c-net: #22A0A8; }
+      .nm-bar { display: flex; gap: 2px; height: 14px; padding: 3px; border-radius: 99px; background: var(--bg); box-shadow: var(--nm-in-sm); }
+      .nm-bar > i { display: block; height: 8px; border-radius: 4px; min-width: 3px; transition: width .5s ease; }
+      .nm-bar > i:first-child { border-radius: 99px 4px 4px 99px; }
+      .nm-bar > i:last-child { border-radius: 4px 99px 99px 4px; }
+      .nm-bar > i:only-child { border-radius: 99px; }
+      .nm-bar.lg { height: 22px; padding: 4px; }
+      .nm-bar.lg > i { height: 14px; }
+      .nm-key { display: inline-flex; align-items: center; gap: 6px; font-size: 11px; color: var(--muted); }
+      .nm-key::before { content: ""; width: 10px; height: 10px; border-radius: 3px; background: var(--k); flex: none; }
+      .nm-sign { width: 26px; height: 26px; border-radius: 50%; display: inline-grid; place-items: center; flex: none; font-weight: 700; font-size: 15px; line-height: 1; background: var(--bg); box-shadow: var(--nm-in-sm); }
+
       /* sticky header */
       .nm-header { background: color-mix(in srgb, var(--bg) 88%, transparent); backdrop-filter: blur(14px) saturate(1.2); -webkit-backdrop-filter: blur(14px) saturate(1.2); }
 
@@ -5826,7 +5840,24 @@ function ExpensesPage({ expenses, onAdd, onDelete, onConfirm, activeTheme }) {
 
 const STOCK_LOG_LABELS = { gift: "هدايا", damage: "تالف", tester: "فتح للتجربة" };
 
-function AccountingPage({ sales, products, expenses, stockLogs, activeTheme }) {
+function AccountingPage({ sales: allSales, products, expenses: allExpenses, stockLogs: allLogs, activeTheme }) {
+  const [period, setPeriod] = useState("all"); // month | last | all
+  const [showAllCats, setShowAllCats] = useState(false);
+
+  const now = new Date();
+  const monthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+  const lastStart = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+  const inRange = (d) => {
+    if (period === "all") return true;
+    const t = new Date(d);
+    return period === "month" ? t >= monthStart : t >= lastStart && t < monthStart;
+  };
+  const sales = useMemo(() => allSales.filter((x) => inRange(x.date)), [allSales, period]); // eslint-disable-line
+  const expenses = useMemo(() => allExpenses.filter((x) => inRange(x.date)), [allExpenses, period]); // eslint-disable-line
+  const stockLogs = useMemo(() => allLogs.filter((x) => inRange(x.date)), [allLogs, period]); // eslint-disable-line
+  const monthLabel = (d) => d.toLocaleDateString("ar", { month: "long" });
+  const PERIODS = [["month", `هذا الشهر (${monthLabel(monthStart)})`], ["last", `الشهر الماضي`], ["all", "الكل"]];
+
   const costById = useMemo(() => {
     const m = new Map();
     products.forEach((p) => m.set(p.id, p.cost || 0));
@@ -5847,7 +5878,7 @@ function AccountingPage({ sales, products, expenses, stockLogs, activeTheme }) {
   const expensesByCategory = useMemo(() => {
     const map = new Map();
     expenses.forEach((e) => map.set(e.category, (map.get(e.category) || 0) + e.amount));
-    return Array.from(map.entries()).map(([name, total]) => ({ name, total }));
+    return Array.from(map.entries()).map(([name, total]) => ({ name, total })).sort((x, y) => y.total - x.total);
   }, [expenses]);
 
   const shrinkageByType = useMemo(() => {
@@ -5866,101 +5897,185 @@ function AccountingPage({ sales, products, expenses, stockLogs, activeTheme }) {
   const inventoryValueRetail = products.reduce((a, p) => a + p.stock * p.price, 0);
   const potentialProfit = inventoryValueRetail - inventoryValueCost;
 
-  const chartData = [
-    { name: "المبيعات", value: totalRevenue },
-    { name: "تكلفة البضاعة", value: cogs },
-    { name: "المصروفات", value: totalExpenses },
-    { name: "صافي الربح", value: netProfit },
+  const pctOfSales = (v) => (totalRevenue > 0 ? (v / totalRevenue) * 100 : 0);
+  const netMargin = pctOfSales(netProfit);
+  const grossMargin = pctOfSales(grossProfit);
+  const collectRate = totalRevenue > 0 ? (totalCollected / totalRevenue) * 100 : 0;
+  const loss = netProfit < 0;
+
+  // Where each dinar of sales went. When there is a loss the costs exceed the
+  // sales, so the bar is scaled to the costs and the overrun is stated in words.
+  const split = [
+    { key: "cogs", label: "تكلفة البضاعة", value: cogs, color: "var(--c-cogs)" },
+    { key: "exp", label: "المصروفات", value: totalExpenses, color: "var(--c-exp)" },
+    { key: "waste", label: "الهدر (هدايا/تالف/تجربة)", value: totalShrinkage, color: "var(--c-waste)" },
+    { key: "net", label: "صافي الربح", value: Math.max(0, netProfit), color: "var(--c-net)" },
   ];
+  const splitBase = Math.max(1, split.reduce((a, x) => a + x.value, 0));
+
+  const Line = ({ sign, label, value, strong, tone, note, barColor }) => (
+    <div className={`flex flex-col gap-1.5 ${strong ? "nm-well px-3 py-3" : "px-3"}`}>
+      <div className="flex items-center gap-3">
+        <span className="nm-sign" aria-hidden="true" style={{ color: sign === "−" ? "var(--bad)" : sign === "=" ? "var(--accent-ink)" : "var(--ok)" }}>{sign}</span>
+        <span className="flex-1 min-w-0">
+          <span className={`block truncate ${strong ? "font-bold text-sm" : "text-sm"}`}>{label}</span>
+          {note && <span className="block text-[11px] nm-mut">{note}</span>}
+        </span>
+        <span className={`nm-num shrink-0 ${strong ? "font-bold text-base" : "font-semibold text-sm"}`} style={{ color: tone || "var(--text)" }}>{fmt(value)}</span>
+      </div>
+      {barColor && totalRevenue > 0 && (
+        <span className="block" style={{ paddingRight: 38 }} aria-hidden="true">
+          <span className="nm-bar" style={{ width: `${Math.max(6, Math.min(100, Math.abs(pctOfSales(value))))}%` }}><i style={{ width: "100%", background: barColor }} /></span>
+        </span>
+      )}
+    </div>
+  );
 
   return (
-    <div className="space-y-5">
-      <h2 className="text-xl font-bold flex items-center gap-2"><Calculator size={20} /> المحاسبة الشاملة</h2>
-      <p className="text-xs text-[var(--muted)] -mt-3">نظرة كاملة تربط المبيعات، تكلفة البضاعة، المصروفات، الهدايا/التالف، وقيمة المخزون في مكان واحد.</p>
-
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-        <StatCard label="إجمالي المبيعات" value={fmt(totalRevenue) + " K.D"} color="var(--accent)" icon={TrendingUp} themeKey={activeTheme} slot={0} />
-        <StatCard label="المحصل" value={fmt(totalCollected) + " K.D"} color="#3F7D57" icon={Wallet} themeKey={activeTheme} slot={1} />
-        <StatCard label="متبقي العملاء" value={fmt(totalRemaining) + " K.D"} color="#B23A3A" icon={AlertTriangle} themeKey={activeTheme} slot={2} />
-        <StatCard label="تكلفة البضاعة" value={fmt(cogs) + " K.D"} color="var(--accent-dark)" icon={Package} themeKey={activeTheme} slot={3} />
+    <div className="flex flex-col gap-5 max-w-5xl mx-auto">
+      <div>
+        <h2 className="text-xl font-bold">المحاسبة الشاملة</h2>
+        <p className="text-sm nm-mut">المبيعات والتكلفة والمصروفات والهدر والمخزون في مكان واحد</p>
       </div>
 
-      <Card className="p-5 text-center">
-        <p className="font-bold flex items-center justify-center gap-2 mb-3">
-          {netProfit >= 0 ? <TrendingUp size={18} className="text-[#3F7D57]" /> : <TrendingDown size={18} className="text-[#B23A3A]" />}
-          صافي الربح الحقيقي
-        </p>
-        <p dir="ltr" className={`text-2xl sm:text-3xl font-extrabold whitespace-nowrap ${netProfit >= 0 ? "text-[#3F7D57]" : "text-[#B23A3A]"}`}>{fmt(netProfit)} K.D</p>
-        <p className="text-xs text-[var(--muted)] mt-2">= إجمالي المبيعات − تكلفة البضاعة − المصروفات − قيمة الهدايا/التالف/التجربة (بسعر التكلفة)</p>
-        <div className="grid grid-cols-3 gap-3 mt-4 pt-4 border-t border-[var(--border)] text-center">
-          <div>
-            <p className="text-[11px] text-[var(--muted)]">الربح الإجمالي</p>
-            <p className="font-bold">{fmt(grossProfit)} K.D</p>
+      <div className="nm-tog" role="tablist" aria-label="الفترة">
+        {PERIODS.map(([k, label]) => (
+          <button key={k} role="tab" aria-selected={period === k} className={period === k ? "is-on" : ""} onClick={() => setPeriod(k)}>{label}</button>
+        ))}
+      </div>
+
+      {/* headline */}
+      <div className="grid md:grid-cols-2 gap-5 items-center">
+        <SoftDial
+          value={fmt(netProfit)}
+          pct={loss ? 0 : netMargin}
+          label="صافي الربح الحقيقي"
+          caption={totalRevenue <= 0 ? "لا مبيعات في هذه الفترة" : loss ? "خسارة في هذه الفترة" : `${netMargin.toFixed(0)}٪ من المبيعات`}
+        />
+        <div className="grid grid-cols-2 gap-3">
+          <StatCard label="إجمالي المبيعات" value={fmt(totalRevenue)} unit="د.ك" icon={TrendingUp} />
+          <StatCard label="الربح الإجمالي" value={fmt(grossProfit)} unit="د.ك" icon={Calculator} tone="ink" />
+          <StatCard label="المحصّل" value={fmt(totalCollected)} unit="د.ك" icon={Wallet} tone="ok" />
+          <StatCard label="متبقي العملاء" value={fmt(totalRemaining)} unit="د.ك" icon={AlertTriangle} tone={totalRemaining > 0 ? "due" : undefined} />
+        </div>
+      </div>
+
+      {/* where the sales went: one bar, every part named with its amount */}
+      <Card className="p-4 flex flex-col gap-4">
+        <div className="flex items-baseline justify-between gap-3">
+          <h3 className="font-bold">أين ذهبت المبيعات؟</h3>
+          <span className="text-xs nm-mut">من كل 100 دينار</span>
+        </div>
+        {totalRevenue <= 0 ? (
+          <EmptyState text="لا مبيعات في هذه الفترة" />
+        ) : (
+          <>
+            <div className="nm-bar lg" role="img" aria-label={split.map((x) => `${x.label} ${pctOfSales(x.value).toFixed(0)}٪`).join("، ")}>
+              {split.filter((x) => x.value > 0).map((x) => (
+                <i key={x.key} style={{ width: `${(x.value / splitBase) * 100}%`, background: x.color }} title={`${x.label}: ${fmt(x.value)} د.ك`} />
+              ))}
+            </div>
+            <div className="flex flex-col">
+              {split.map((x, i) => (
+                <div key={x.key} className={`flex items-center gap-3 py-2.5 ${i ? "border-t border-[var(--border)]" : ""}`}>
+                  <span className="nm-key" style={{ "--k": x.color }} aria-hidden="true" />
+                  <span className={`flex-1 min-w-0 text-sm truncate ${x.key === "net" ? "font-bold" : ""}`}>{x.label}</span>
+                  <span className="nm-num text-xs nm-mut shrink-0 w-10 text-left">{pctOfSales(x.value).toFixed(0)}٪</span>
+                  <span className={`nm-num text-sm shrink-0 w-20 text-left ${x.key === "net" ? "font-bold" : "font-semibold"}`}>{fmt(x.value)}</span>
+                </div>
+              ))}
+            </div>
+            {loss && (
+              <p className="text-xs font-semibold text-[var(--bad)] flex items-center gap-1.5" role="alert"><AlertTriangle size={14} /> التكاليف تجاوزت المبيعات بمبلغ {fmt(Math.abs(netProfit))} د.ك</p>
+            )}
+          </>
+        )}
+      </Card>
+
+      {/* the calculation, step by step */}
+      <Card className="py-4 px-1 flex flex-col gap-3">
+        <h3 className="font-bold px-3">حساب الربح خطوة بخطوة</h3>
+        <Line sign="+" label="إجمالي المبيعات" value={totalRevenue} />
+        <Line sign="−" label="تكلفة البضاعة المباعة" value={cogs} barColor="var(--c-cogs)" />
+        <Line sign="=" label="الربح الإجمالي" value={grossProfit} strong note={`${grossMargin.toFixed(0)}٪ من المبيعات`} />
+        <Line sign="−" label="المصروفات" value={totalExpenses} barColor="var(--c-exp)" />
+        <Line sign="−" label="الهدر (هدايا/تالف/تجربة) بسعر التكلفة" value={totalShrinkage} barColor="var(--c-waste)" />
+        <Line sign="=" label="صافي الربح الحقيقي" value={netProfit} strong tone={loss ? "var(--bad)" : "var(--ok)"} note={totalRevenue > 0 ? `${netMargin.toFixed(0)}٪ من المبيعات` : undefined} />
+      </Card>
+
+      {/* collection */}
+      <Card className="p-4 flex flex-col gap-3">
+        <div className="flex items-center justify-between gap-3 flex-wrap">
+          <h3 className="font-bold">التحصيل من العملاء</h3>
+          <div className="flex items-center gap-3">
+            <span className="nm-key" style={{ "--k": "var(--chart-1)" }}>محصّل</span>
+            <span className="nm-key" style={{ "--k": "var(--chart-2)" }}>متبقٍ</span>
           </div>
-          <div>
-            <p className="text-[11px] text-[var(--muted)]">إجمالي المصروفات</p>
-            <p className="font-bold text-[#B23A3A]">{fmt(totalExpenses)} K.D</p>
-          </div>
-          <div>
-            <p className="text-[11px] text-[var(--muted)]">هدر (هدايا/تالف/تجربة)</p>
-            <p className="font-bold text-[#B23A3A]">{fmt(totalShrinkage)} K.D</p>
-          </div>
+        </div>
+        <div className="nm-bar lg" role="img" aria-label={`محصّل ${collectRate.toFixed(0)}٪ من المبيعات`}>
+          {totalCollected > 0 && <i style={{ width: `${collectRate}%`, background: "var(--chart-1)" }} />}
+          {totalRemaining > 0 && <i style={{ width: `${100 - collectRate}%`, background: "var(--chart-2)" }} />}
+        </div>
+        <div className="grid grid-cols-3 text-center">
+          <div><p className="text-[10.5px] nm-mut">محصّل</p><p className="nm-num font-bold text-sm">{fmt(totalCollected)}</p></div>
+          <div className="border-x border-[var(--border)]"><p className="text-[10.5px] nm-mut">متبقٍ على العملاء</p><p className="nm-num font-bold text-sm text-[var(--due)]">{fmt(totalRemaining)}</p></div>
+          <div><p className="text-[10.5px] nm-mut">نسبة التحصيل</p><p className="nm-num font-bold text-sm">{collectRate.toFixed(0)}٪</p></div>
         </div>
       </Card>
 
-      <Card className="p-4">
-        <h3 className="font-bold mb-3">مقارنة مالية</h3>
-        <div style={{ width: "100%", height: 240 }}>
-          <ResponsiveContainer>
-            <BarChart data={chartData}>
-              <CartesianGrid strokeDasharray="3 3" stroke="var(--border)" />
-              <XAxis dataKey="name" tick={{ fontSize: 12 }} />
-              <YAxis tick={{ fontSize: 12 }} />
-              <Tooltip formatter={(v) => fmt(v) + " K.D"} />
-              <Bar dataKey="value" radius={[6, 6, 0, 0]}>
-                {chartData.map((_, i) => <Cell key={i} fill={COLORS[i % COLORS.length]} />)}
-              </Bar>
-            </BarChart>
-          </ResponsiveContainer>
-        </div>
-      </Card>
-
-      <div className="grid md:grid-cols-2 gap-4">
-        <Card className="p-4">
-          <h3 className="font-bold mb-3">قيمة المخزون الحالي</h3>
-          <div className="space-y-2 text-sm">
-            <div className="flex justify-between"><span className="text-[var(--muted)]">بسعر التكلفة</span><span className="font-bold">{fmt(inventoryValueCost)} K.D</span></div>
-            <div className="flex justify-between"><span className="text-[var(--muted)]">بسعر البيع</span><span className="font-bold">{fmt(inventoryValueRetail)} K.D</span></div>
-            <div className="flex justify-between pt-2 border-t border-[var(--border)]"><span className="text-[var(--muted)]">الربح المحتمل عند بيع كل المخزون</span><span className="font-bold text-[#3F7D57]">{fmt(potentialProfit)} K.D</span></div>
+      <div className="grid md:grid-cols-2 gap-5">
+        <Card className="p-4 flex flex-col gap-3">
+          <div className="flex items-baseline justify-between gap-3">
+            <h3 className="font-bold">قيمة المخزون الحالي</h3>
+            <span className="text-xs nm-mut">الآن · لا يتأثر بالفترة</span>
           </div>
+          <div className="nm-well py-2.5 px-2 grid grid-cols-3 text-center">
+            <div><p className="text-[10px] nm-mut">بسعر التكلفة</p><p className="nm-num font-bold text-sm">{fmt(inventoryValueCost)}</p></div>
+            <div className="border-x border-[var(--border)]"><p className="text-[10px] nm-mut">بسعر البيع</p><p className="nm-num font-bold text-sm nm-ink">{fmt(inventoryValueRetail)}</p></div>
+            <div><p className="text-[10px] nm-mut">الربح المحتمل</p><p className="nm-num font-bold text-sm text-[var(--ok)]">{fmt(potentialProfit)}</p></div>
+          </div>
+          <p className="text-[11px] nm-mut">الربح المحتمل هو ما تربحه إذا بعت كل المخزون بسعره الحالي.</p>
         </Card>
 
-        <Card className="p-4">
-          <h3 className="font-bold mb-3">تفصيل الهدر (بسعر التكلفة)</h3>
-          <div className="space-y-2 text-sm">
-            {Object.entries(shrinkageByType).map(([type, val]) => (
-              <div key={type} className="flex justify-between">
-                <span className="text-[var(--muted)]">{STOCK_LOG_LABELS[type]}</span>
-                <span className="font-bold text-[#B23A3A]">{fmt(val)} K.D</span>
-              </div>
-            ))}
+        <Card className="p-4 flex flex-col gap-3">
+          <div className="flex items-baseline justify-between gap-3">
+            <h3 className="font-bold">تفصيل الهدر</h3>
+            <span className="text-xs nm-mut">بسعر التكلفة · <span className="nm-num font-semibold text-[var(--text)]">{fmt(totalShrinkage)}</span></span>
           </div>
+          {Object.entries(shrinkageByType).map(([type, val]) => (
+            <div key={type} className="flex flex-col gap-1.5">
+              <div className="flex items-center justify-between gap-3 text-sm">
+                <span>{STOCK_LOG_LABELS[type]}</span>
+                <span className="flex items-baseline gap-2"><span className="nm-num text-xs nm-mut">{totalShrinkage > 0 ? ((val / totalShrinkage) * 100).toFixed(0) : 0}٪</span><span className="nm-num font-semibold">{fmt(val)}</span></span>
+              </div>
+              <span className="nm-bar" style={{ width: `${Math.max(6, totalShrinkage > 0 ? (val / Math.max(shrinkageByType.gift, shrinkageByType.damage, shrinkageByType.tester)) * 100 : 6)}%` }} aria-hidden="true"><i style={{ width: "100%", background: val > 0 ? "var(--c-waste)" : "transparent" }} /></span>
+            </div>
+          ))}
         </Card>
       </div>
 
-      {expensesByCategory.length > 0 && (
-        <Card className="p-4">
-          <h3 className="font-bold mb-3">المصروفات حسب النوع</h3>
-          <div className="space-y-2">
-            {expensesByCategory.sort((a, b) => b.total - a.total).map((c) => (
-              <div key={c.name} className="flex justify-between text-sm">
-                <span className="text-[var(--muted)]">{c.name}</span>
-                <span className="font-semibold">{fmt(c.total)} K.D</span>
+      <Card className="p-4 flex flex-col gap-3">
+        <div className="flex items-baseline justify-between gap-3">
+          <h3 className="font-bold">المصروفات حسب النوع</h3>
+          <span className="text-xs nm-mut">الإجمالي <span className="nm-num font-semibold text-[var(--text)]">{fmt(totalExpenses)}</span></span>
+        </div>
+        {expensesByCategory.length === 0 ? (
+          <EmptyState text="لا مصروفات في هذه الفترة" />
+        ) : (
+          (showAllCats ? expensesByCategory : expensesByCategory.slice(0, 5)).map((c) => (
+            <div key={c.name} className="flex flex-col gap-1.5">
+              <div className="flex items-center justify-between gap-3 text-sm">
+                <span className="truncate">{c.name}</span>
+                <span className="flex items-baseline gap-2 shrink-0"><span className="nm-num text-xs nm-mut">{totalExpenses > 0 ? ((c.total / totalExpenses) * 100).toFixed(0) : 0}٪</span><span className="nm-num font-semibold">{fmt(c.total)}</span></span>
               </div>
-            ))}
-          </div>
-        </Card>
-      )}
+              <span className="nm-bar" style={{ width: `${Math.max(6, (c.total / expensesByCategory[0].total) * 100)}%` }} aria-hidden="true"><i style={{ width: "100%", background: "var(--c-exp)" }} /></span>
+            </div>
+          ))
+        )}
+        {expensesByCategory.length > 5 && (
+          <button onClick={() => setShowAllCats((v) => !v)} className="nm-btn ink self-center !py-2 !px-4 text-[13px]">{showAllCats ? "عرض أعلى 5 فقط" : `عرض كل الأنواع (${expensesByCategory.length})`}</button>
+        )}
+      </Card>
     </div>
   );
 }
