@@ -807,7 +807,7 @@ function RecoverModal({ users, onRecover, onClose }) {
 
 /* ---------------------------------- Confirm Dialog ---------------------------------- */
 
-function ConfirmModal({ message, onConfirm, onCancel }) {
+function ConfirmModal({ message, onConfirm, onCancel, label = "تأكيد الحذف", icon: ActionIcon = Trash2 }) {
   return (
     <div className="fixed inset-0 z-[10001] flex items-center justify-center bg-black/55 p-4 announce-backdrop" dir="rtl">
       <div className="bg-[var(--surface)] rounded-2xl w-full max-w-xs p-6 text-center announce-pop">
@@ -817,7 +817,7 @@ function ConfirmModal({ message, onConfirm, onCancel }) {
         <p className="text-sm font-semibold mb-5">{message}</p>
         <div className="flex gap-2">
           <Btn variant="danger" className="flex-1" onClick={onConfirm}>
-            <Trash2 size={15} /> تأكيد الحذف
+            <ActionIcon size={15} /> {label}
           </Btn>
           <Btn variant="outline" className="flex-1" onClick={onCancel}>
             إلغاء
@@ -1123,12 +1123,15 @@ export default function App() {
   const [fontScale, setFontScaleState] = useState(1);
   const [toast, setToast] = useState("");
   const [confirmState, setConfirmState] = useState(null); // { message, onConfirm }
+  const [allocDirty, setAllocDirty] = useState(false); // unsaved distribution edits → the save bar replaces the sell knob
   const sidebarRef = useRef(null); // desktop sidebar's scrollable nav list, for the up/down scroll buttons
   const mobileNavRef = useRef(null); // same, for the mobile nav drawer
   const pushActiveRef = useRef(false); // true once real push notifications are active on this device
 
-  const askConfirm = useCallback((message, onConfirm) => {
-    setConfirmState({ message, onConfirm });
+  // opts: { label, icon } — the confirm button's wording, for confirmations
+  // that aren't deletions (defaults to "تأكيد الحذف").
+  const askConfirm = useCallback((message, onConfirm, opts) => {
+    setConfirmState({ message, onConfirm, ...(opts || {}) });
   }, []);
 
   // Records one audit-trail entry (login/logout or any business action).
@@ -1968,6 +1971,8 @@ export default function App() {
       {confirmState && (
         <ConfirmModal
           message={confirmState.message}
+          label={confirmState.label}
+          icon={confirmState.icon}
           onConfirm={() => {
             confirmState.onConfirm();
             setConfirmState(null);
@@ -2220,6 +2225,7 @@ export default function App() {
                 logActivity(currentUser, "تعديل توزيع المخزون", note || "");
               }}
               onConfirm={askConfirm}
+              onDirtyChange={setAllocDirty}
             />
           )}
           {view === "announcements" && (
@@ -2374,7 +2380,7 @@ export default function App() {
       </div>
 
       {/* Floating sell knob — present everywhere except while selling */}
-      {view !== "newsale" && (
+      {view !== "newsale" && !(view === "allocations" && allocDirty) && (
         <>
           <div className="no-print nm-fabfade" aria-hidden="true" />
           <button className="no-print nm-fab" onClick={() => setView("newsale")} aria-label="بيع جديد">
@@ -4916,42 +4922,176 @@ function AnnouncementPopup({ announcement, onClose }) {
 }
 
 const ALLOC_LOG_TYPES = {
-  set: { label: "تعيين كمية", cls: "bg-[var(--surface-3)] text-[var(--accent-dark)]" },
-  adjust_in: { label: "إضافة", cls: "bg-[#EAF6EF] text-[#3F7D57]" },
-  adjust_out: { label: "سحب", cls: "bg-[#FBEAEA] text-[#B23A3A]" },
-  equal: { label: "توزيع بالتساوي", cls: "bg-[var(--surface-3)] text-[var(--accent-dark)]" },
-  clear: { label: "إلغاء التوزيع", cls: "bg-[#FBEAEA] text-[#B23A3A]" },
-  transfer_in: { label: "استلام من زميل", cls: "bg-[#FFF6E5] text-[#C97B3D]" },
-  transfer_out: { label: "تسليم لزميل", cls: "bg-[#FFF6E5] text-[#C97B3D]" },
-  stock_adjust: { label: "هدية/تالف/تجربة", cls: "bg-[#FBEAEA] text-[#B23A3A]" },
-  stock_adjust_undo: { label: "إلغاء هدية/تالف", cls: "bg-[#EAF6EF] text-[#3F7D57]" },
+  set: { label: "تعيين كمية", tone: "info", icon: Check },
+  adjust_in: { label: "إضافة", tone: "ok", icon: Plus },
+  adjust_out: { label: "سحب", tone: "bad", icon: Minus },
+  equal: { label: "توزيع بالتساوي", tone: "info", icon: Users2 },
+  clear: { label: "إلغاء التوزيع", tone: "bad", icon: Trash2 },
+  transfer_in: { label: "استلام من زميل", tone: "due", icon: ArrowLeftRight },
+  transfer_out: { label: "تسليم لزميل", tone: "due", icon: ArrowLeftRight },
+  stock_adjust: { label: "هدية / تالف / تجربة", tone: "bad", icon: Gift },
+  stock_adjust_undo: { label: "إلغاء هدية / تالف", tone: "ok", icon: History },
 };
-const allocLogType = (e) => (e.type === "adjust" ? (e.delta >= 0 ? ALLOC_LOG_TYPES.adjust_in : ALLOC_LOG_TYPES.adjust_out) : ALLOC_LOG_TYPES[e.type] || ALLOC_LOG_TYPES.set);
+const allocLogKind = (e) => (e.type === "adjust" ? (e.delta >= 0 ? "adjust_in" : "adjust_out") : ALLOC_LOG_TYPES[e.type] ? e.type : "set");
 
-// One row of the stock-distribution movement log.
-function AllocationLogRow({ e, showSeller = true }) {
-  const t = allocLogType(e);
-  return (
-    <div className="flex items-start justify-between gap-3 bg-[var(--surface-2)] rounded-xl px-3 py-2.5">
-      <div className="min-w-0">
-        <p className="text-sm font-semibold flex items-center gap-1.5 flex-wrap">
-          <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${t.cls}`}>{t.label}</span>
-          {e.productName}
-          {showSeller && <span className="text-[var(--muted)] font-normal">— {e.sellerName}</span>}
-        </p>
-        <p className="text-[11px] text-[var(--muted)] mt-0.5">
-          الحصة: {e.before} ← {e.after} · بواسطة {e.byUserName} · {dateLabel(e.date)} {timeLabel(e.date)}
-          {e.note ? ` · ${e.note}` : ""}
-        </p>
+// Several small steps made one after another on the same share (same seller,
+// product, direction and author, minutes apart) read as one line instead of
+// a wall of "+1" rows. Display only — the stored log is untouched.
+const mergeAllocationLog = (list) => {
+  const out = [];
+  list.forEach((e) => {
+    const kind = allocLogKind(e);
+    const last = out[out.length - 1];
+    const mergeable = kind === "adjust_in" || kind === "adjust_out" || kind === "set";
+    if (
+      last && mergeable && last.kind === kind && last.sellerId === e.sellerId && last.productId === e.productId &&
+      last.byUserName === e.byUserName && (last.note || "") === (e.note || "") &&
+      Math.sign(last.delta) === Math.sign(e.delta) && Math.abs(new Date(last.oldest) - new Date(e.date)) <= 10 * 60000
+    ) {
+      last.count += 1;
+      last.oldest = e.date;
+      if (e.delta >= 0) { last.before = Math.min(last.before, e.before); last.after = Math.max(last.after, e.after); }
+      else { last.before = Math.max(last.before, e.before); last.after = Math.min(last.after, e.after); }
+      last.delta = last.after - last.before;
+    } else {
+      out.push({ ...e, kind, count: 1, oldest: e.date });
+    }
+  });
+  return out;
+};
+
+const allocDayLabel = (iso) => {
+  const d = new Date(iso);
+  const same = (a, b) => a.toDateString() === b.toDateString();
+  if (same(d, new Date())) return "اليوم";
+  if (same(d, new Date(Date.now() - 86400000))) return "أمس";
+  return d.toLocaleDateString("ar-u-nu-latn", { weekday: "long", day: "numeric", month: "long", year: "numeric" });
+};
+
+const productsWord = (n) => (n === 1 ? "منتج واحد" : n === 2 ? "منتجان" : n >= 3 && n <= 10 ? `${n} منتجات` : `${n} منتجاً`);
+const changesWord = (n) => (n === 1 ? "تغيير واحد غير محفوظ" : n === 2 ? "تغييران غير محفوظين" : n >= 3 && n <= 10 ? `${n} تغييرات غير محفوظة` : `${n} تغييراً غير محفوظ`);
+const sellersWord = (n) => (n === 1 ? "بائع واحد" : n === 2 ? "بائعَين" : n >= 3 && n <= 10 ? `${n} بائعين` : `${n} بائعاً`);
+
+// The movement log, grouped by day, with consecutive steps merged.
+function AllocationLogList({ entries, showSeller = true }) {
+  const merged = mergeAllocationLog(entries);
+  const days = [];
+  merged.forEach((e) => {
+    const key = new Date(e.date).toDateString();
+    let g = days[days.length - 1];
+    if (!g || g.key !== key) { g = { key, label: allocDayLabel(e.date), rows: [] }; days.push(g); }
+    g.rows.push(e);
+  });
+  return days.map((g) => (
+    <section key={g.key} className="flex flex-col gap-2" aria-label={g.label}>
+      <p className="text-xs font-bold nm-mut px-2">{g.label}</p>
+      <div className="nm-card px-4 py-1">
+        {g.rows.map((e, i) => {
+          const t = ALLOC_LOG_TYPES[e.kind];
+          const Icon = t.icon;
+          const color = e.delta > 0 ? "var(--ok)" : e.delta < 0 ? "var(--bad)" : "var(--muted)";
+          return (
+            <div key={e.id} className={`flex items-start gap-3 py-3 ${i ? "border-t border-[var(--border)]" : ""}`}>
+              <span className="nm-knob sm" style={{ boxShadow: "var(--nm-in-sm)", color: `var(--${t.tone})` }} aria-hidden="true"><Icon size={15} /></span>
+              <div className="flex-1 min-w-0">
+                <p className="text-sm font-semibold truncate">
+                  {showSeller ? e.sellerName : e.productName}
+                  {showSeller && <span className="nm-mut font-normal"> · {e.productName}</span>}
+                </p>
+                <p className="text-[11.5px] leading-relaxed" style={{ color: `var(--${t.tone})` }}>
+                  {t.label}
+                  <span className="nm-mut"> · الحصة {e.before} ← {e.after}</span>
+                </p>
+                <p className="text-[11px] nm-mut leading-relaxed">
+                  {timeLabel(e.date)} · بواسطة {e.byUserName}
+                  {e.count > 1 ? ` · ${e.count} حركات متتالية` : ""}
+                  {e.note ? ` · ${e.note}` : ""}
+                </p>
+              </div>
+              <span dir="ltr" className="nm-num font-bold text-[15px] shrink-0 pt-0.5" style={{ color }}>
+                {e.delta > 0 ? "+" : e.delta < 0 ? "−" : ""}{Math.abs(e.delta)}
+              </span>
+            </div>
+          );
+        })}
       </div>
-      <span dir="ltr" className={`text-sm font-extrabold shrink-0 ${e.delta > 0 ? "text-[#3F7D57]" : e.delta < 0 ? "text-[#B23A3A]" : "text-[var(--muted)]"}`}>
-        {e.delta > 0 ? "+" : ""}{e.delta}
-      </span>
-    </div>
+    </section>
+  ));
+}
+
+// One button that opens a searchable list from the bottom — for any choice
+// that can grow long (50 sellers, 200 products).
+function OptionPicker({ options, value, onChange, label, allLabel, title, icon: Icon = UsersIcon, searchPlaceholder = "بحث..." }) {
+  const [open, setOpen] = useState(false);
+  const [q, setQ] = useState("");
+  const current = value === "all" ? null : options.find((o) => o.id === value);
+  const term = q.trim().toLowerCase();
+  const shown = options.filter((o) => !term || o.name.toLowerCase().includes(term));
+  const pick = (id) => { onChange(id); setOpen(false); setQ(""); };
+
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e) => { if (e.key === "Escape") setOpen(false); };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [open]);
+
+  return (
+    <>
+      <button onClick={() => setOpen(true)} className="nm-out rounded-full pr-4 pl-3 py-2 flex items-center gap-2 text-right w-full min-w-0" aria-haspopup="dialog" aria-expanded={open}>
+        <span className="flex-1 min-w-0">
+          <span className="block text-[10.5px] nm-mut leading-tight">{label}</span>
+          <span className="block text-[13px] font-bold truncate leading-snug">{current ? current.name : allLabel}</span>
+        </span>
+        {current ? (
+          <span role="button" tabIndex={0} onClick={(e) => { e.stopPropagation(); onChange("all"); }} onKeyDown={(e) => { if (e.key === "Enter") { e.stopPropagation(); onChange("all"); } }} className="nm-knob sm" style={{ width: 28, height: 28 }} aria-label={`إلغاء تصفية ${label}`}><X size={13} /></span>
+        ) : (
+          <ChevronDown size={16} className="nm-mut shrink-0" />
+        )}
+      </button>
+
+      {open && (
+        <div className="fixed inset-0 z-[9000] flex items-end sm:items-center justify-center announce-backdrop" style={{ background: "rgba(30,38,50,.45)" }} dir="rtl" onClick={() => setOpen(false)}>
+          <div role="dialog" aria-modal="true" aria-label={title} onClick={(e) => e.stopPropagation()} className="w-full sm:max-w-md flex flex-col gap-3 p-4 announce-pop" style={{ background: "var(--bg)", borderRadius: "28px 28px 0 0", maxHeight: "82vh", paddingBottom: "calc(16px + env(safe-area-inset-bottom, 0px))", boxShadow: "0 -12px 40px rgba(20,28,40,.3)" }}>
+            <div className="flex items-center justify-between gap-3">
+              <h3 className="font-bold">{title}</h3>
+              <button onClick={() => setOpen(false)} className="nm-knob sm" aria-label="إغلاق"><X size={15} /></button>
+            </div>
+            {options.length > 6 && (
+              <div className="relative">
+                <Search size={16} className="absolute right-4 top-1/2 -translate-y-1/2 text-[var(--muted)]" />
+                <input autoFocus className={inputCls + " pr-10 !rounded-full"} placeholder={searchPlaceholder} value={q} onChange={(e) => setQ(e.target.value)} />
+              </div>
+            )}
+            <div className="overflow-y-auto flex flex-col gap-1 px-1 pb-1" style={{ minHeight: 0, WebkitOverflowScrolling: "touch" }}>
+              {!term && (
+                <button onClick={() => pick("all")} className={`flex items-center gap-3 px-3 py-2.5 rounded-2xl text-right ${value === "all" ? "nm-in-sm" : ""}`}>
+                  <span className="nm-knob sm" style={{ boxShadow: "var(--nm-in-sm)" }}><Icon size={15} className="nm-ink" /></span>
+                  <span className="flex-1 font-bold text-sm">{allLabel}</span>
+                  {value === "all" && <Check size={16} className="nm-ink" />}
+                </button>
+              )}
+              {shown.map((o) => (
+                <button key={o.id} onClick={() => pick(o.id)} className={`flex items-center gap-3 px-3 py-2.5 rounded-2xl text-right ${value === o.id ? "nm-in-sm" : ""}`}>
+                  <span className="nm-knob sm" style={{ boxShadow: "var(--nm-in-sm)" }}><span className="text-sm font-bold nm-ink">{o.name.trim().charAt(0)}</span></span>
+                  <span className="flex-1 min-w-0">
+                    <span className="block font-semibold text-sm truncate">{o.name}</span>
+                    {o.sub && <span className="block text-[11px] nm-mut">{o.sub}</span>}
+                  </span>
+                  {value === o.id && <Check size={16} className="nm-ink shrink-0" />}
+                </button>
+              ))}
+              {shown.length === 0 && <EmptyState text="لا توجد نتيجة مطابقة" />}
+            </div>
+          </div>
+        </div>
+      )}
+    </>
   );
 }
 
 /* ------------------------------ Seller Stock Allocation ------------------------------ */
+
 // The warehouse manager's workspace (مسؤول المخزن — the primary admin, or
 // whoever they've delegated that responsibility to): hand out each
 // product's stock to accounts by quantity, top up / take back, and keep a
@@ -4960,25 +5100,45 @@ function AllocationLogRow({ e, showSeller = true }) {
 // dry, they request more from a colleague, and nothing moves until that
 // colleague approves. Products nobody has assigned a share for stay
 // completely unrestricted, exactly as before.
-function StockAllocationPage({ products, users, currentUser, canManage, allocations, allocationLog = [], onSave, onConfirm }) {
+function StockAllocationPage({ products, users, currentUser, canManage, allocations, allocationLog = [], onSave, onConfirm, onDirtyChange }) {
   // Managers sell too, so every account — admin or seller — can hold a share.
   const accounts = users;
-  const managedProductIds = new Set(allocations.map((a) => a.productId));
-  const [tab, setTab] = useState("distribute"); // distribute | summary | log
+  const [tab, setTab] = useState("distribute"); // distribute | sellers | log
   const [productId, setProductId] = useState("");
-  const [draft, setDraft] = useState({});
-  const [deltaDraft, setDeltaDraft] = useState({});
-  const [search, setSearch] = useState("");
-  const [summaryFilter, setSummaryFilter] = useState("all");
+  // Edits to "what each account holds" are collected here (as +/- per
+  // account, so a sale that lands meanwhile doesn't distort them) and saved
+  // together: one distribution session is one save and one log line per seller.
+  const [pending, setPending] = useState({});
+  const [prodSearch, setProdSearch] = useState("");
+  const [prodFilter, setProdFilter] = useState("all"); // all | shared | free
+  const [prodCount, setProdCount] = useState(20);
+  const [sellerSearch, setSellerSearch] = useState("");
+  const [sellerCount, setSellerCount] = useState(20);
+  const [sumSearch, setSumSearch] = useState("");
+  const [sumFilter, setSumFilter] = useState("all"); // all | has | out
+  const [sumCount, setSumCount] = useState(10);
+  const [expanded, setExpanded] = useState({});
   const [logAccount, setLogAccount] = useState("all");
   const [logProduct, setLogProduct] = useState("all");
+  const [logCount, setLogCount] = useState(60);
 
   const product = products.find((p) => p.id === productId) || null;
+  const priceById = useMemo(() => new Map(products.map((p) => [p.id, p.price || 0])), [products]);
 
-  useEffect(() => { setDraft({}); }, [productId]);
+  const statsOf = (p) => {
+    const rows = allocations.filter((a) => a.productId === p.id);
+    const held = rows.reduce((s, a) => s + a.remaining, 0);
+    const received = rows.reduce((s, a) => s + a.allocated, 0);
+    return { managed: rows.length > 0, holders: rows.filter((a) => a.remaining > 0).length, held, sold: received - held, free: Math.max(0, p.stock - held), over: held > p.stock };
+  };
+  const statusPill = (p, st) =>
+    st.over ? <span className="nm-pill bad">يتجاوز المخزون</span>
+    : !st.managed ? <span className="nm-pill plain">غير موزّع</span>
+    : p.stock <= 0 ? <span className="nm-pill bad">نفد المخزون</span>
+    : st.free === 0 ? <span className="nm-pill ok">موزّع بالكامل</span>
+    : <span className="nm-pill info">متاح {st.free}</span>;
 
   const recordFor = (sellerId) => allocations.find((a) => a.sellerId === sellerId && a.productId === productId) || null;
-
   const productAllocations = allocations.filter((a) => a.productId === productId);
   const totalAllocated = productAllocations.reduce((s, a) => s + a.allocated, 0);
   const totalRemaining = productAllocations.reduce((s, a) => s + a.remaining, 0);
@@ -4987,59 +5147,64 @@ function StockAllocationPage({ products, users, currentUser, canManage, allocati
   // pool the warehouse manager can still hand out.
   const freePool = product ? Math.max(0, product.stock - totalRemaining) : 0;
 
+  const heldOf = (sellerId) => recordFor(sellerId)?.remaining || 0;
+  const changes = accounts
+    .map((s) => ({ seller: s, delta: Math.max(-heldOf(s.id), pending[s.id] || 0) }))
+    .filter((c) => c.delta !== 0);
+  const dirty = changes.length > 0;
+  const addTotal = changes.reduce((s, c) => s + Math.max(0, c.delta), 0);
+  const takeTotal = changes.reduce((s, c) => s + Math.max(0, -c.delta), 0);
+  const liveFree = Math.max(0, freePool - addTotal + takeTotal);
+  const liveHeld = totalRemaining + addTotal - takeTotal;
+
+  useEffect(() => {
+    if (onDirtyChange) onDirtyChange(dirty);
+    return () => { if (onDirtyChange) onDirtyChange(false); };
+  }, [dirty]); // eslint-disable-line
+
   const entry = (seller, type, before, after, note) =>
     makeAllocationLogEntry({ byUser: currentUser, type, productId, productName: product.name, sellerId: seller.id, sellerName: seller.name, before, after, note });
 
-  const overPoolMsg = (need) => `لا يوجد مخزون حر كافٍ: المطلوب ${need} والمتاح غير الموزَّع ${freePool} فقط. زِد كمية المنتج في صفحة المخزون أولاً، أو اسحب من حصة بائع آخر.`;
-
-  const saveSeller = (seller) => {
-    if (!product) return;
-    const raw = draft[seller.id];
-    if (raw === undefined || raw === "") return;
-    const newAllocated = Math.max(0, Math.floor(Number(raw) || 0));
-    const existing = recordFor(seller.id);
-    const before = existing ? existing.allocated : 0;
-    const delta = newAllocated - before;
-    if (delta === 0) return;
-    if (delta > freePool) { alert(overPoolMsg(delta)); return; }
-    let next;
-    if (existing) {
-      const nextRemaining = Math.max(0, Math.min(newAllocated, existing.remaining + delta));
-      next = allocations.map((a) => (a.id === existing.id ? { ...a, allocated: newAllocated, remaining: nextRemaining, sellerName: seller.name, productName: product.name } : a));
-    } else {
-      next = [...allocations, { id: uid(), sellerId: seller.id, sellerName: seller.name, productId, productName: product.name, allocated: newAllocated, remaining: newAllocated }];
-    }
-    onSave(next, `${product.name} ← ${seller.name}: ${newAllocated} قطعة`, [entry(seller, "set", before, newAllocated)]);
-    setDraft((d) => ({ ...d, [seller.id]: undefined }));
+  // Leaving an unsaved distribution asks first, instead of silently dropping it.
+  const guard = (fn) => {
+    if (!dirty) { fn(); return; }
+    onConfirm(`لديك ${changesWord(changes.length)} على توزيع "${product.name}". هل تريد تجاهل ما عدّلته؟`, () => { setPending({}); fn(); }, { label: "تجاهل التغييرات", icon: X });
   };
+  const openProduct = (id) => { setPending({}); setSellerSearch(""); setSellerCount(20); setProductId(id); };
 
-  // Quick top-up / take-back by a small step, without retyping the total.
-  const adjustSeller = (seller, delta) => {
-    if (!product || !delta) return;
-    const existing = recordFor(seller.id);
-    if (delta > 0 && delta > freePool) { alert(overPoolMsg(delta)); return; }
-    if (!existing) {
-      if (delta <= 0) return; // nothing to take back from an empty share
-      onSave(
-        [...allocations, { id: uid(), sellerId: seller.id, sellerName: seller.name, productId, productName: product.name, allocated: delta, remaining: delta }],
-        `${product.name} ← ${seller.name}: +${delta} قطعة`,
-        [entry(seller, "adjust", 0, delta)]
-      );
-      return;
-    }
-    // Only unsold pieces can be taken back.
-    const take = delta < 0 ? -Math.min(existing.remaining, -delta) : delta;
-    if (take === 0) return;
-    const newAllocated = Math.max(0, existing.allocated + take);
-    const newRemaining = Math.max(0, Math.min(newAllocated, existing.remaining + take));
-    const next = allocations.map((a) => (a.id === existing.id ? { ...a, allocated: newAllocated, remaining: newRemaining } : a));
-    onSave(next, `${product.name} ← ${seller.name}: ${take > 0 ? "+" : ""}${take} قطعة`, [entry(seller, "adjust", existing.allocated, newAllocated)]);
+  const saveAll = () => {
+    if (!product || !dirty) return;
+    // Only the free pool can be handed out (the steppers already cap this;
+    // checked again here in case stock changed while the page was open).
+    if (addTotal - takeTotal > freePool) return;
+    let next = allocations;
+    const logEntries = [];
+    changes.forEach(({ seller, delta }) => {
+      const existing = next.find((a) => a.sellerId === seller.id && a.productId === productId);
+      if (!existing) {
+        if (delta <= 0) return;
+        next = [...next, { id: uid(), sellerId: seller.id, sellerName: seller.name, productId, productName: product.name, allocated: delta, remaining: delta }];
+        logEntries.push(entry(seller, "adjust", 0, delta));
+        return;
+      }
+      // Only unsold pieces can be taken back.
+      const take = delta < 0 ? -Math.min(existing.remaining, -delta) : delta;
+      if (take === 0) return;
+      const newAllocated = Math.max(0, existing.allocated + take);
+      const newRemaining = Math.max(0, Math.min(newAllocated, existing.remaining + take));
+      next = next.map((a) => (a.id === existing.id ? { ...a, allocated: newAllocated, remaining: newRemaining, sellerName: seller.name, productName: product.name } : a));
+      logEntries.push(entry(seller, "adjust", existing.allocated, newAllocated));
+    });
+    if (logEntries.length === 0) { setPending({}); return; }
+    const note = changes.map((c) => `${c.seller.name} ${c.delta > 0 ? "+" : "−"}${Math.abs(c.delta)}`).join("، ");
+    onSave(next, `${product.name}: ${note}`, logEntries);
+    setPending({});
   };
 
   const equalDistribute = () => {
     if (!product || accounts.length === 0) return;
     onConfirm(
-      `سيتم توزيع كامل كمية "${product.name}" (${product.stock} قطعة) بالتساوي على ${accounts.length} بائع، ما يستبدل أي توزيع سابق لهذا المنتج. هل تريد المتابعة؟`,
+      `سيتم توزيع كامل كمية "${product.name}" (${product.stock} قطعة) بالتساوي على ${sellersWord(accounts.length)}، ما يستبدل أي توزيع سابق لهذا المنتج. هل تريد المتابعة؟`,
       () => {
         const base = Math.floor(product.stock / accounts.length);
         let remainder = product.stock - base * accounts.length;
@@ -5051,7 +5216,9 @@ function StockAllocationPage({ products, users, currentUser, canManage, allocati
           return { id: uid(), sellerId: s.id, sellerName: s.name, productId, productName: product.name, allocated: qty, remaining: qty };
         });
         onSave([...others, ...fresh], `توزيع بالتساوي: ${product.name}`, logEntries);
-      }
+        setPending({});
+      },
+      { label: "توزيع بالتساوي", icon: Users2 }
     );
   };
 
@@ -5062,315 +5229,470 @@ function StockAllocationPage({ products, users, currentUser, canManage, allocati
         entry({ id: a.sellerId, name: a.sellerName }, "clear", a.allocated, 0)
       );
       onSave(allocations.filter((a) => a.productId !== productId), `إلغاء توزيع: ${product.name}`, logEntries);
-    });
+      setPending({});
+    }, { label: "إلغاء التوزيع" });
   };
-
-  const filteredProducts = products.filter((p) => p.name.toLowerCase().includes(search.trim().toLowerCase()));
-  const myLog = allocationLog.filter((e) => e.sellerId === currentUser.id).slice(0, 30);
 
   /* ---------------- Everyone else: read-only view of their own shares ---------------- */
   if (!canManage) {
     const mine = allocations
-      .filter((a) => a.sellerId === currentUser.id)
+      .filter((a) => a.sellerId === currentUser.id && (a.allocated > 0 || a.remaining > 0))
       .sort((a, b) => a.remaining - b.remaining);
+    const myHeld = mine.reduce((s, a) => s + a.remaining, 0);
+    const mySold = mine.reduce((s, a) => s + (a.allocated - a.remaining), 0);
+    const myValue = mine.reduce((s, a) => s + a.remaining * (priceById.get(a.productId) || 0), 0);
+    const myLog = allocationLog.filter((e) => e.sellerId === currentUser.id).slice(0, 60);
     return (
-      <div className="space-y-5">
-        <h2 className="text-xl font-bold flex items-center gap-2"><Boxes size={22} /> مخزوني المخصص</h2>
-        <p className="text-sm text-[var(--muted)]">
-          هذه هي الكميات التي خصصها لك مسؤول المخزن من كل منتج. إذا نفدت حصتك من منتج ما، يمكنك إرسال طلب لأحد زملائك من شاشة "تسجيل عملية بيع" — ولا تنتقل الكمية إليك إلا بعد موافقته.
-        </p>
+      <div className="flex flex-col gap-5 max-w-3xl mx-auto">
+        <div>
+          <h2 className="text-xl font-bold">حصتي من المخزون</h2>
+          <p className="text-sm nm-mut">{mine.length === 0 ? "لا توجد حصة مخصصة لك" : `${productsWord(mine.length)} · ${myHeld} قطعة بحوزتك`}</p>
+        </div>
+
         {mine.length === 0 ? (
-          <Card className="p-8"><EmptyState text="لم يتم تخصيص أي منتج لك بعد — بإمكانك البيع من المخزون العام بحرية" /></Card>
+          <div className="nm-well p-8"><EmptyState text="لم يُخصَّص لك أي منتج بعد — بإمكانك البيع من المخزون العام بحرية" /></div>
         ) : (
-          <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-3">
-            {mine.map((a) => {
-              const sold = a.allocated - a.remaining;
-              const low = a.remaining <= 0;
-              return (
-                <Card key={a.id} className="p-4 card-hover">
-                  <div className="flex justify-between items-start gap-2">
-                    <p className="font-bold truncate">{a.productName}</p>
-                    <span className={`text-[10px] font-bold px-2 py-1 rounded-full shrink-0 ${low ? "bg-[#FBEAEA] text-[#B23A3A]" : "bg-[#EAF6EF] text-[#3F7D57]"}`}>
-                      {low ? "نفدت حصتك" : "متاح"}
-                    </span>
-                  </div>
-                  <p className={`text-sm font-bold mt-2 ${low ? "text-[#B23A3A]" : "text-[#3F7D57]"}`}>المتبقي لك: {a.remaining} من {a.allocated}</p>
-                  <p className="text-xs text-[var(--muted)] mt-1">تم بيع {sold} قطعة من حصتك</p>
-                  <div className="w-full h-1.5 bg-[var(--surface-3)] rounded-full mt-2 overflow-hidden">
-                    <div className="h-full bg-[var(--accent)]" style={{ width: `${a.allocated ? Math.min(100, (a.remaining / a.allocated) * 100) : 0}%` }} />
-                  </div>
-                </Card>
-              );
-            })}
-          </div>
-        )}
-        {myLog.length > 0 && (
-          <Card className="p-4">
-            <h3 className="font-bold mb-3 flex items-center gap-2"><History size={16} /> حركات حصتي</h3>
-            <div className="space-y-2">
-              {myLog.map((e) => <AllocationLogRow key={e.id} e={e} showSeller={false} />)}
+          <>
+            <div className="nm-well px-2 py-3 grid grid-cols-3 text-center" aria-label="ملخص حصتي">
+              <div><p className="text-[10.5px] nm-mut">بحوزتي</p><p className="nm-num font-bold nm-ink">{myHeld}</p></div>
+              <div className="border-x border-[var(--border)]"><p className="text-[10.5px] nm-mut">قيمتها (د.ك)</p><p className="nm-num font-bold">{fmt(myValue)}</p></div>
+              <div><p className="text-[10.5px] nm-mut">بعت منها</p><p className="nm-num font-bold text-[var(--ok)]">{mySold}</p></div>
             </div>
-          </Card>
+            <p className="text-xs nm-mut leading-relaxed px-1">
+              هذه الكميات خصّصها لك مسؤول المخزن. إذا نفدت حصتك من منتج، اطلبه من زميل من شاشة البيع، ولا تنتقل الكمية إليك إلا بعد موافقته.
+            </p>
+            <div className="grid sm:grid-cols-2 gap-4">
+              {mine.map((a) => {
+                const sold = a.allocated - a.remaining;
+                const out = a.remaining <= 0;
+                return (
+                  <div key={a.id} className="nm-card p-4 flex flex-col gap-3">
+                    <div className="flex items-center gap-3">
+                      <span className="nm-knob" style={{ boxShadow: "var(--nm-in-sm)" }} aria-hidden="true"><Package size={17} className={out ? "nm-mut" : "nm-ink"} /></span>
+                      <div className="flex-1 min-w-0">
+                        <p className="font-bold truncate">{a.productName}</p>
+                        <p className="text-[11px] nm-mut">استلمت {a.allocated} · بعت {sold}</p>
+                      </div>
+                      {out ? <span className="nm-pill bad">نفدت حصتك</span> : (
+                        <div className="text-left shrink-0">
+                          <p className="nm-num font-bold text-[22px] leading-none nm-ink">{a.remaining}</p>
+                          <p className="text-[10.5px] nm-mut mt-1">باقٍ لك</p>
+                        </div>
+                      )}
+                    </div>
+                    <div className="nm-bar" role="img" aria-label={`الباقي ${a.remaining} من ${a.allocated}`}>
+                      <i style={{ width: `${a.allocated ? Math.min(100, (a.remaining / a.allocated) * 100) : 0}%`, background: "var(--accent)", minWidth: out ? 0 : undefined }} />
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </>
+        )}
+
+        {myLog.length > 0 && (
+          <>
+            <h3 className="font-bold text-[15px]">حركات حصتي</h3>
+            <AllocationLogList entries={myLog} showSeller={false} />
+          </>
         )}
       </div>
     );
   }
 
-  /* ---------------- Summary data (per account) ---------------- */
-  const summaryAccounts = accounts
-    .filter((u) => summaryFilter === "all" || u.id === summaryFilter)
+  /* ---------------- Warehouse manager ---------------- */
+  const allStats = products.map((p) => ({ p, st: statsOf(p) }));
+  const totalStock = products.reduce((s, p) => s + p.stock, 0);
+  const totalHeld = allocations.reduce((s, a) => s + a.remaining, 0);
+  const sharedCount = allStats.filter((x) => x.st.managed).length;
+  const pTerm = prodSearch.trim().toLowerCase();
+  const productList = allStats
+    .filter((x) => (prodFilter === "all" ? true : prodFilter === "shared" ? x.st.managed : !x.st.managed))
+    .filter((x) => !pTerm || x.p.name.toLowerCase().includes(pTerm));
+
+  // Accounts for the open product: holders first, then by name. Ordered by
+  // the saved shares, so rows don't jump around while editing.
+  const sTerm = sellerSearch.trim().toLowerCase();
+  const productSellers = accounts
+    .filter((s) => !sTerm || s.name.toLowerCase().includes(sTerm))
+    .sort((x, y) => heldOf(y.id) - heldOf(x.id) || x.name.localeCompare(y.name, "ar"));
+
+  /* Summary data (per account) */
+  const sellerRows = accounts
     .map((u) => {
-      const rows = allocations.filter((a) => a.sellerId === u.id).sort((a, b) => a.productName.localeCompare(b.productName, "ar"));
+      const rows = allocations
+        .filter((a) => a.sellerId === u.id && (a.allocated > 0 || a.remaining > 0))
+        .sort((a, b) => b.remaining - a.remaining || a.productName.localeCompare(b.productName, "ar"));
+      const received = rows.reduce((s, a) => s + a.allocated, 0);
+      const held = rows.reduce((s, a) => s + a.remaining, 0);
       return {
-        user: u,
-        rows,
-        allocated: rows.reduce((s, a) => s + a.allocated, 0),
-        remaining: rows.reduce((s, a) => s + a.remaining, 0),
+        user: u, rows, received, held, sold: received - held,
+        value: rows.reduce((s, a) => s + a.remaining * (priceById.get(a.productId) || 0), 0),
+        outCount: rows.filter((a) => a.remaining <= 0).length,
       };
-    });
+    })
+    .sort((x, y) => y.held - x.held || x.user.name.localeCompare(y.user.name, "ar"));
+  const sumTerm = sumSearch.trim().toLowerCase();
+  const sellerList = sellerRows
+    .filter((r) => (sumFilter === "all" ? true : sumFilter === "has" ? r.held > 0 : r.outCount > 0))
+    .filter((r) => !sumTerm || r.user.name.toLowerCase().includes(sumTerm));
 
   let logList = allocationLog;
   if (logAccount !== "all") logList = logList.filter((e) => e.sellerId === logAccount);
   if (logProduct !== "all") logList = logList.filter((e) => e.productId === logProduct);
-  const loggedProducts = Array.from(new Map(allocationLog.map((e) => [e.productId, e.productName])).entries());
+  const loggedProducts = Array.from(new Map(allocationLog.map((e) => [e.productId, e.productName])).entries()).map(([id, name]) => ({ id, name }));
+  const logAdded = logList.reduce((s, e) => s + Math.max(0, e.delta), 0);
+  const logTaken = logList.reduce((s, e) => s + Math.max(0, -e.delta), 0);
 
   const TABS = [
     ["distribute", "التوزيع", Boxes],
-    ["summary", "ملخص البائعين", Users2],
-    ["log", "سجل الحركات", History],
+    ["sellers", "البائعون", Users2],
+    ["log", "السجل", History],
   ];
 
-  /* ---------------- Warehouse manager: assign & manage per-account shares ---------------- */
   return (
-    <div className="space-y-5">
-      <div className="flex items-center justify-between gap-2 flex-wrap">
-        <h2 className="text-xl font-bold flex items-center gap-2"><Boxes size={22} /> توزيع المخزون على البائعين</h2>
-        <span className="text-[11px] font-bold px-2.5 py-1 rounded-full bg-[#FFF6E5] text-[#C97B3D] inline-flex items-center gap-1">
-          <ShieldCheck size={12} /> {currentUser.isPrimaryAdmin ? "الحساب الرئيسي" : "مسؤول المخزن"}
-        </span>
+    <div className="flex flex-col gap-5 max-w-3xl mx-auto">
+      <div className="flex items-center justify-between gap-3">
+        <div className="min-w-0">
+          <h2 className="text-xl font-bold">توزيع المخزون</h2>
+          <p className="text-sm nm-mut">{totalHeld} قطعة بحوزة البائعين</p>
+        </div>
+        <span className="nm-pill due shrink-0"><ShieldCheck size={12} /> {currentUser.isPrimaryAdmin ? "الحساب الرئيسي" : "مسؤول المخزن"}</span>
       </div>
 
-      <div className="flex gap-1 bg-[var(--surface-2)] rounded-xl p-1 w-fit max-w-full overflow-x-auto">
+      {/* third level of navigation — lighter than the bars above it */}
+      <div className="flex gap-2" role="tablist" aria-label="أقسام التوزيع">
         {TABS.map(([key, label, Icon]) => (
-          <button
-            key={key}
-            onClick={() => setTab(key)}
-            className={`px-3 py-1.5 rounded-lg text-xs font-semibold inline-flex items-center gap-1.5 whitespace-nowrap transition ${
-              tab === key ? "bg-[var(--accent)] text-white shadow-sm" : "text-[var(--muted)] hover:text-[var(--text)]"
-            }`}
-          >
-            <Icon size={14} /> {label}
+          <button key={key} role="tab" aria-selected={tab === key} onClick={() => guard(() => setTab(key))}
+            className={`flex-1 inline-flex items-center justify-center gap-1.5 px-3 py-2.5 rounded-full text-[13px] transition ${tab === key ? "nm-in-sm nm-ink font-bold" : "nm-mut font-semibold"}`}>
+            <Icon size={15} /> {label}
           </button>
         ))}
       </div>
 
-      {tab === "distribute" && (
-        <>
-          <p className="text-sm text-[var(--muted)]">
-            اختر منتجاً وخصّص لكل بائع — بما فيهم المدراء — كمية منه، وزِد أو اسحب في أي وقت. لا يمكن توزيع أكثر من المخزون الفعلي غير الموزَّع، وكل حركة تُسجَّل باسم صاحبها في "سجل الحركات".
-          </p>
+      {/* ============ 1 — distribute: product list ============ */}
+      {tab === "distribute" && !product && (
+        accounts.length === 0 ? (
+          <div className="nm-well p-8"><EmptyState text="لا يوجد بائعون مسجّلون بعد لتوزيع المخزون عليهم" /></div>
+        ) : (
+          <>
+            <div className="nm-well px-2 py-3 grid grid-cols-3 text-center" aria-label="ملخص المخزون">
+              <div><p className="text-[10.5px] nm-mut">في المخزن</p><p className="nm-num font-bold">{totalStock}</p></div>
+              <div className="border-x border-[var(--border)]"><p className="text-[10.5px] nm-mut">بحوزة البائعين</p><p className="nm-num font-bold nm-ink">{totalHeld}</p></div>
+              <div><p className="text-[10.5px] nm-mut">غير موزّع</p><p className="nm-num font-bold">{Math.max(0, totalStock - totalHeld)}</p></div>
+            </div>
 
-          {accounts.length === 0 ? (
-            <Card className="p-8"><EmptyState text="لا يوجد بائعون مسجّلون بعد لتوزيع المخزون عليهم" /></Card>
-          ) : (
-            <>
-              <Card className="p-4 space-y-3">
-                <div className="relative">
-                  <Search size={15} className="absolute right-3 top-1/2 -translate-y-1/2 text-[var(--muted)]" />
-                  <input className={inputCls + " pr-9"} placeholder="بحث عن منتج..." value={search} onChange={(e) => setSearch(e.target.value)} />
-                </div>
-                <div className="grid sm:grid-cols-2 lg:grid-cols-3 gap-2 max-h-64 overflow-y-auto">
-                  {filteredProducts.map((p) => {
-                    const isManaged = managedProductIds.has(p.id);
-                    const active = p.id === productId;
-                    return (
-                      <button
-                        key={p.id}
-                        onClick={() => setProductId(p.id)}
-                        className={`text-right px-3 py-2 rounded-xl border transition text-sm ${
-                          active ? "border-[var(--accent)] bg-[var(--surface-3)] font-bold" : "border-[var(--border)] hover:border-[var(--accent)]"
-                        }`}
-                      >
-                        <div className="flex items-center justify-between gap-2">
-                          <span className="truncate">{p.name}</span>
-                          {isManaged && <Boxes size={13} className="text-[var(--accent)] shrink-0" />}
+            <div className="flex flex-col gap-3">
+              <div className="relative">
+                <Search size={16} className="absolute right-4 top-1/2 -translate-y-1/2 text-[var(--muted)]" />
+                <input className={inputCls + " pr-10 !rounded-full"} placeholder="بحث عن منتج..." value={prodSearch} onChange={(e) => { setProdSearch(e.target.value); setProdCount(20); }} />
+              </div>
+              <div className="nm-tog" role="tablist" aria-label="تصفية المنتجات">
+                {[["all", "الكل", products.length], ["shared", "موزّع", sharedCount], ["free", "غير موزّع", products.length - sharedCount]].map(([k, label, n]) => (
+                  <button key={k} role="tab" aria-selected={prodFilter === k} className={prodFilter === k ? "is-on" : ""} onClick={() => { setProdFilter(k); setProdCount(20); }}>
+                    {label} <span className="nm-num text-[11px] opacity-70">{n}</span>
+                  </button>
+                ))}
+              </div>
+            </div>
+
+            <p className="text-xs nm-mut px-1">اختر منتجاً لتوزيعه على البائعين.</p>
+
+            {productList.length === 0 ? (
+              <div className="nm-well p-8"><EmptyState text="لا توجد منتجات مطابقة" /></div>
+            ) : (
+              <div className="grid sm:grid-cols-2 gap-4 items-start">
+                {productList.slice(0, prodCount).map(({ p, st }) => (
+                  <button key={p.id} onClick={() => openProduct(p.id)} className="nm-card nm-tile p-4 flex flex-col gap-3 text-right w-full" aria-label={`توزيع ${p.name}`}>
+                    <div className="flex items-center gap-3 w-full">
+                      <span className="nm-knob" style={{ boxShadow: "var(--nm-in-sm)" }} aria-hidden="true">
+                        {st.managed ? <Boxes size={17} className="nm-ink" /> : <Package size={17} className="nm-mut" />}
+                      </span>
+                      <div className="flex-1 min-w-0">
+                        <p className="font-bold truncate">{p.name}</p>
+                        <p className="text-[11px] nm-mut truncate">
+                          {st.managed ? (st.holders > 0 ? `بحوزة ${sellersWord(st.holders)}` : "لا أحد يحمل منه حالياً") : `${p.stock} في المخزن · البيع منه حرّ للجميع`}
+                        </p>
+                      </div>
+                      {statusPill(p, st)}
+                      <ChevronLeft size={16} className="nm-mut shrink-0" />
+                    </div>
+                    {st.managed && (
+                      <>
+                        <div className="nm-bar w-full" aria-hidden="true">
+                          {st.held > 0 && <i style={{ width: `${Math.min(100, (st.held / Math.max(p.stock, st.held, 1)) * 100)}%`, background: st.over ? "var(--bad)" : "var(--accent)" }} />}
                         </div>
-                        <span className="text-[11px] text-[var(--muted)]">المخزون الكلي: {p.stock}</span>
-                      </button>
-                    );
-                  })}
+                        <div className="flex items-center justify-between w-full text-[11.5px] nm-mut">
+                          <span>بحوزة البائعين <b className="nm-num text-[var(--text)]">{st.held}</b></span>
+                          <span>من <b className="nm-num text-[var(--text)]">{p.stock}</b> في المخزن</span>
+                        </div>
+                      </>
+                    )}
+                  </button>
+                ))}
+              </div>
+            )}
+            {productList.length > prodCount && (
+              <button onClick={() => setProdCount((n) => n + 20)} className="nm-btn ink self-center !py-2 !px-4 text-[13px]">عرض المزيد ({productList.length - prodCount} باقي)</button>
+            )}
+          </>
+        )
+      )}
+
+      {/* ============ 1b — distribute: one product ============ */}
+      {tab === "distribute" && product && (() => {
+        const st = statsOf(product);
+        const heldPct = Math.min(100, (liveHeld / Math.max(product.stock, liveHeld, 1)) * 100);
+        return (
+          <>
+            <div className="flex items-center gap-3">
+              <button className="nm-knob" onClick={() => guard(() => setProductId(""))} aria-label="رجوع إلى قائمة المنتجات"><ChevronRight size={18} /></button>
+              <div className="flex-1 min-w-0">
+                <h3 className="font-bold text-lg truncate leading-tight">{product.name}</h3>
+                <p className="text-xs nm-mut">في المخزن {product.stock} قطعة</p>
+              </div>
+              {statusPill(product, st)}
+            </div>
+
+            <div className="nm-card p-4 flex flex-col gap-3">
+              <div className="flex items-end justify-between gap-3">
+                <div>
+                  <p className="text-xs nm-mut">متاح للتوزيع</p>
+                  <p className="nm-num font-bold text-[34px] leading-none mt-1" style={{ color: liveFree > 0 ? "var(--accent-ink)" : "var(--muted)" }}>{liveFree}</p>
                 </div>
-              </Card>
+                <p className="text-xs nm-mut text-left leading-relaxed">
+                  {dirty ? `كان ${freePool} قبل تعديلك` : `من ${product.stock} قطعة في المخزن`}
+                </p>
+              </div>
+              <div className="nm-bar lg" role="img" aria-label={`بحوزة البائعين ${liveHeld} من ${product.stock}`}>
+                {liveHeld > 0 && <i style={{ width: `${heldPct}%`, background: st.over ? "var(--bad)" : "var(--accent)" }} />}
+              </div>
+              <div className="nm-well px-2 py-2.5 grid grid-cols-3 text-center">
+                <div><p className="text-[10.5px] nm-mut">في المخزن</p><p className="nm-num font-bold">{product.stock}</p></div>
+                <div className="border-x border-[var(--border)]"><p className="text-[10.5px] nm-mut">بحوزة البائعين</p><p className="nm-num font-bold nm-ink">{liveHeld}</p></div>
+                <div><p className="text-[10.5px] nm-mut">بيع من الحصص</p><p className="nm-num font-bold text-[var(--ok)]">{totalSold}</p></div>
+              </div>
+            </div>
 
-              {product && (
-                <>
-                  <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-                    <StatCard label="المخزون الفعلي" value={product.stock} color="var(--accent-dark)" icon={Package} />
-                    <StatCard label="بحوزة البائعين (غير مباع)" value={totalRemaining} color="var(--accent)" icon={Boxes} />
-                    <StatCard label="متاح للتوزيع" value={freePool} color="#8A7B6C" icon={Package} />
-                    <StatCard label="بيع من الحصص" value={totalSold} color="#3F7D57" icon={TrendingUp} />
-                  </div>
+            {st.over && (
+              <div className="nm-well p-3 flex items-start gap-2" role="alert">
+                <AlertTriangle size={16} className="text-[var(--bad)] shrink-0 mt-0.5" />
+                <p className="text-xs text-[var(--bad)] leading-relaxed">
+                  المحتسب بحوزة البائعين ({totalRemaining}) أكثر من المخزون الفعلي ({product.stock}) بفارق {totalRemaining - product.stock} قطعة — غالباً بسبب هدية أو تالف أو تجربة سُجّلت قبل هذا التحديث. اسحب الفرق بزر (−) من حصة البائع المعني لتتطابق الأرقام.
+                </p>
+              </div>
+            )}
 
-                  {totalRemaining > product.stock && (
-                    <Card className="p-3 flex items-start gap-2 border-[#E8B4B4]">
-                      <AlertTriangle size={16} className="text-[#B23A3A] shrink-0 mt-0.5" />
-                      <p className="text-xs text-[#B23A3A] leading-relaxed">
-                        المحتسب بحوزة البائعين ({totalRemaining}) أكثر من المخزون الفعلي ({product.stock}) بفارق {totalRemaining - product.stock} قطعة — غالباً بسبب هدية أو تالف أو تجربة سُجّلت قبل هذا التحديث. اسحب الفرق بزر (−) من حصة البائع المعني لتتطابق الأرقام.
-                      </p>
-                    </Card>
-                  )}
+            <div className="flex justify-center gap-6">
+              <button className="nm-act" onClick={equalDistribute}>
+                <span className="nm-knob lg"><Users2 size={20} /></span>
+                توزيع بالتساوي
+              </button>
+              {productAllocations.length > 0 && (
+                <button className="nm-act" onClick={clearProduct}>
+                  <span className="nm-knob lg danger"><Trash2 size={20} /></span>
+                  إلغاء التوزيع
+                </button>
+              )}
+            </div>
 
-                  <Card className="p-4">
-                    <div className="flex items-center justify-between mb-3 gap-2 flex-wrap">
-                      <h3 className="font-bold">توزيع "{product.name}"</h3>
-                      <div className="flex gap-2">
-                        <Btn variant="ghost" onClick={equalDistribute}><Users2 size={15} /> توزيع بالتساوي</Btn>
-                        {productAllocations.length > 0 && (
-                          <Btn variant="outline" onClick={clearProduct}><Trash2 size={15} /> إلغاء التوزيع</Btn>
+            <div className="flex items-baseline justify-between gap-3">
+              <h3 className="font-bold text-[15px]">ما بحوزة كل بائع</h3>
+              <p className="text-xs nm-mut">{sellersWord(accounts.length)}</p>
+            </div>
+            {accounts.length > 6 && (
+              <div className="relative">
+                <Search size={16} className="absolute right-4 top-1/2 -translate-y-1/2 text-[var(--muted)]" />
+                <input className={inputCls + " pr-10 !rounded-full"} placeholder={`ابحث بالاسم بين ${accounts.length} بائعاً...`} value={sellerSearch} onChange={(e) => { setSellerSearch(e.target.value); setSellerCount(20); }} />
+              </div>
+            )}
+            {liveFree === 0 && product.stock > 0 && !st.over && (
+              <p className="text-xs nm-mut leading-relaxed px-1">وُزّع كل المخزون. لزيادة حصة بائع اسحب من بائع آخر، أو زِد كمية المنتج من صفحة المنتجات.</p>
+            )}
+            {product.stock <= 0 && (
+              <p className="text-xs text-[var(--bad)] leading-relaxed px-1">هذا المنتج نفد من المخزن، فلا توجد كمية لتوزيعها.</p>
+            )}
+
+            {productSellers.length === 0 ? (
+              <div className="nm-well p-8"><EmptyState text="لا يوجد بائع بهذا الاسم" /></div>
+            ) : (
+              <div className="nm-card px-4 py-1">
+                {productSellers.slice(0, sellerCount).map((s, i) => {
+                  const rec = recordFor(s.id);
+                  const saved = rec ? rec.remaining : 0;
+                  const delta = Math.max(-saved, pending[s.id] || 0);
+                  const val = saved + delta;
+                  const sold = rec ? rec.allocated - rec.remaining : 0;
+                  return (
+                    <div key={s.id} className={`flex items-center gap-3 py-3 ${i ? "border-t border-[var(--border)]" : ""}`}>
+                      <span className="nm-knob sm" style={{ boxShadow: "var(--nm-in-sm)" }} aria-hidden="true"><span className="text-sm font-bold nm-ink">{s.name.trim().charAt(0)}</span></span>
+                      <div className="flex-1 min-w-0">
+                        <p className="text-sm font-semibold truncate">{s.name} <span className="text-[10.5px] font-normal nm-mut">{s.role === "admin" ? "مدير" : "بائع"}</span></p>
+                        {delta !== 0 ? (
+                          <p className="text-[11px] font-bold" style={{ color: delta > 0 ? "var(--ok)" : "var(--bad)" }}>
+                            {delta > 0 ? `إضافة ${delta}` : `سحب ${-delta}`} <span className="nm-mut font-normal">· كان {saved}</span>
+                          </p>
+                        ) : (
+                          <p className="text-[11px] nm-mut">{rec && rec.allocated > 0 ? `استلم ${rec.allocated} · باع ${sold}` : "لا حصة بعد"}</p>
                         )}
                       </div>
+                      <SoftStepper value={val} min={0} max={val + liveFree} onChange={(n) => setPending((d) => ({ ...d, [s.id]: n - saved }))} label={`ما بحوزة ${s.name}`} />
                     </div>
+                  );
+                })}
+              </div>
+            )}
+            {productSellers.length > sellerCount && (
+              <button onClick={() => setSellerCount((n) => n + 20)} className="nm-btn ink self-center !py-2 !px-4 text-[13px]">عرض المزيد ({productSellers.length - sellerCount} باقي)</button>
+            )}
 
-                    <div className="space-y-2">
-                      {accounts.map((s) => {
-                        const rec = recordFor(s.id);
-                        const value = draft[s.id] !== undefined ? draft[s.id] : (rec ? String(rec.allocated) : "");
-                        const dirty = draft[s.id] !== undefined && draft[s.id] !== (rec ? String(rec.allocated) : "");
-                        const sold = rec ? rec.allocated - rec.remaining : 0;
-                        const low = rec && rec.remaining <= 0 && rec.allocated > 0;
-                        const deltaValue = deltaDraft[s.id] ?? "1";
-                        const delta = Math.max(1, Math.floor(Number(deltaValue) || 1));
-                        return (
-                          <div key={s.id} className="flex items-center gap-3 bg-[var(--surface-2)] rounded-xl px-3 py-2.5 flex-wrap">
-                            <div className="flex-1 min-w-[120px]">
-                              <p className="font-semibold text-sm flex items-center gap-1.5">
-                                {s.name}
-                                <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-[var(--surface-3)] text-[var(--muted)]">
-                                  {s.role === "admin" ? "مدير" : "بائع"}
+            {dirty && (
+              <div className="no-print fixed inset-x-0 z-40 px-4 flex justify-center" style={{ bottom: "calc(16px + env(safe-area-inset-bottom, 0px))" }}>
+                <div className="nm-out nm-pop rounded-full w-full max-w-2xl flex items-center gap-2 p-2 pr-4 fade-in" role="status">
+                  <div className="flex-1 min-w-0 leading-tight">
+                    <p className="text-[11px] nm-mut">{changesWord(changes.length)}</p>
+                    <p className="text-sm font-bold truncate">
+                      {addTotal > 0 && <span className="text-[var(--ok)]">إضافة {addTotal}</span>}
+                      {addTotal > 0 && takeTotal > 0 && <span className="nm-mut"> · </span>}
+                      {takeTotal > 0 && <span className="text-[var(--bad)]">سحب {takeTotal}</span>}
+                    </p>
+                  </div>
+                  <button className="nm-knob sm" onClick={() => setPending({})} aria-label="تراجع عن التغييرات"><X size={15} /></button>
+                  <button className="nm-btn solid !py-2.5 !px-5 text-sm" onClick={saveAll}><Check size={16} /> حفظ التوزيع</button>
+                </div>
+              </div>
+            )}
+          </>
+        );
+      })()}
+
+      {/* ============ 2 — sellers ============ */}
+      {tab === "sellers" && (
+        <>
+          <div className="nm-well px-2 py-3 grid grid-cols-3 text-center" aria-label="ملخص ما بحوزة البائعين">
+            <div><p className="text-[10.5px] nm-mut">بحوزة البائعين</p><p className="nm-num font-bold nm-ink">{totalHeld}</p></div>
+            <div className="border-x border-[var(--border)]"><p className="text-[10.5px] nm-mut">قيمتها (د.ك)</p><p className="nm-num font-bold">{fmt(sellerRows.reduce((s, r) => s + r.value, 0))}</p></div>
+            <div><p className="text-[10.5px] nm-mut">بيع من الحصص</p><p className="nm-num font-bold text-[var(--ok)]">{sellerRows.reduce((s, r) => s + r.sold, 0)}</p></div>
+          </div>
+
+          <div className="flex flex-col gap-3">
+            {accounts.length > 6 && (
+              <div className="relative">
+                <Search size={16} className="absolute right-4 top-1/2 -translate-y-1/2 text-[var(--muted)]" />
+                <input className={inputCls + " pr-10 !rounded-full"} placeholder={`ابحث بالاسم بين ${accounts.length} بائعاً...`} value={sumSearch} onChange={(e) => { setSumSearch(e.target.value); setSumCount(10); }} />
+              </div>
+            )}
+            <div className="nm-tog" role="tablist" aria-label="تصفية البائعين">
+              {[["all", "الكل", sellerRows.length], ["has", "لديهم حصة", sellerRows.filter((r) => r.held > 0).length], ["out", "نفدت حصة", sellerRows.filter((r) => r.outCount > 0).length]].map(([k, label, n]) => (
+                <button key={k} role="tab" aria-selected={sumFilter === k} className={sumFilter === k ? "is-on" : ""} onClick={() => { setSumFilter(k); setSumCount(10); }}>
+                  {label} <span className="nm-num text-[11px] opacity-70">{n}</span>
+                </button>
+              ))}
+            </div>
+          </div>
+
+          {sellerList.length === 0 ? (
+            <div className="nm-well p-8"><EmptyState text="لا يوجد بائع مطابق" /></div>
+          ) : (
+            <div className="grid md:grid-cols-2 gap-4">
+              {sellerList.slice(0, sumCount).map(({ user, rows, received, held, sold, value, outCount }) => {
+                const open = !!expanded[user.id];
+                const shownRows = open ? rows : rows.slice(0, 3);
+                return (
+                  <div key={user.id} className="nm-card p-4 flex flex-col gap-3">
+                    <div className="flex items-center gap-3">
+                      <span className="nm-knob" style={{ boxShadow: "var(--nm-in-sm)" }} aria-hidden="true"><span className="font-bold nm-ink">{user.name.trim().charAt(0)}</span></span>
+                      <div className="flex-1 min-w-0">
+                        <p className="font-bold truncate">{user.name}</p>
+                        <p className="text-[11px] nm-mut">{user.role === "admin" ? "مدير" : "بائع"}{rows.length > 0 ? ` · ${productsWord(rows.length)}` : ""}</p>
+                      </div>
+                      {outCount > 0 && <span className="nm-pill bad">نفدت {outCount}</span>}
+                      <div className="text-left shrink-0">
+                        <p className="nm-num font-bold text-[22px] leading-none" style={{ color: held > 0 ? "var(--accent-ink)" : "var(--muted)" }}>{held}</p>
+                        <p className="text-[10.5px] nm-mut mt-1">قطعة بحوزته</p>
+                      </div>
+                    </div>
+                    {rows.length === 0 ? (
+                      <p className="text-xs nm-mut">لا توجد حصص مخصصة له.</p>
+                    ) : (
+                      <>
+                        <div className="nm-well px-2 py-2.5 grid grid-cols-3 text-center">
+                          <div><p className="text-[10.5px] nm-mut">استلم</p><p className="nm-num font-bold text-sm">{received}</p></div>
+                          <div className="border-x border-[var(--border)]"><p className="text-[10.5px] nm-mut">باع</p><p className="nm-num font-bold text-sm text-[var(--ok)]">{sold}</p></div>
+                          <div><p className="text-[10.5px] nm-mut">قيمة ما بحوزته</p><p className="nm-num font-bold text-sm">{fmt(value)}</p></div>
+                        </div>
+                        <div className="flex flex-col gap-3">
+                          {shownRows.map((a) => {
+                            const out = a.remaining <= 0;
+                            return (
+                              <button key={a.id} className="text-right w-full" onClick={() => { setTab("distribute"); openProduct(a.productId); }} aria-label={`فتح توزيع ${a.productName}`}>
+                                <span className="flex items-baseline justify-between gap-3">
+                                  <span className="text-[13px] font-semibold truncate">{a.productName}</span>
+                                  <span className="text-[11.5px] nm-mut shrink-0">
+                                    {out ? <b className="text-[var(--bad)]">نفدت</b> : <b className="nm-num text-[var(--text)]">{a.remaining}</b>} من <span className="nm-num">{a.allocated}</span>
+                                  </span>
                                 </span>
-                              </p>
-                              {rec ? (
-                                <p className={`text-xs ${low ? "text-[#B23A3A]" : "text-[var(--muted)]"}`}>
-                                  بحوزته: {rec.remaining} · إجمالي ما استلم: {rec.allocated} · باع: {sold}
-                                </p>
-                              ) : (
-                                <p className="text-xs text-[var(--muted)]">لم يُخصص له شيء بعد</p>
-                              )}
-                            </div>
-
-                            <div className="flex items-center gap-1">
-                              <button
-                                type="button"
-                                title="سحب كمية"
-                                onClick={() => adjustSeller(s, -delta)}
-                                className="w-8 h-8 rounded-lg bg-[#FBEAEA] text-[#B23A3A] flex items-center justify-center hover:brightness-95 active:scale-95"
-                              >
-                                <Minus size={14} />
+                                <span className="nm-bar mt-1.5" aria-hidden="true">
+                                  {!out && <i style={{ width: `${Math.min(100, (a.remaining / Math.max(a.allocated, 1)) * 100)}%`, background: "var(--accent)" }} />}
+                                </span>
                               </button>
-                              <input
-                                type="number"
-                                min="1"
-                                className={inputCls + " !w-14 !py-1.5 text-center"}
-                                value={deltaValue}
-                                onChange={(e) => setDeltaDraft((d) => ({ ...d, [s.id]: e.target.value }))}
-                              />
-                              <button
-                                type="button"
-                                title="إضافة كمية"
-                                onClick={() => adjustSeller(s, delta)}
-                                className="w-8 h-8 rounded-lg bg-[#EAF6EF] text-[#3F7D57] flex items-center justify-center hover:brightness-95 active:scale-95"
-                              >
-                                <Plus size={14} />
-                              </button>
-                            </div>
-
-                            <input
-                              type="number"
-                              min="0"
-                              className={inputCls + " !w-24 !py-1.5"}
-                              placeholder="الإجمالي"
-                              value={value}
-                              onChange={(e) => setDraft((d) => ({ ...d, [s.id]: e.target.value }))}
-                            />
-                            <Btn variant={dirty ? "primary" : "ghost"} className="!px-3 !py-1.5" disabled={!dirty} onClick={() => saveSeller(s)}>
-                              <Check size={14} /> حفظ
-                            </Btn>
-                          </div>
-                        );
-                      })}
-                    </div>
-                  </Card>
-                </>
-              )}
-            </>
+                            );
+                          })}
+                        </div>
+                        {rows.length > 3 && (
+                          <button onClick={() => setExpanded((x) => ({ ...x, [user.id]: !open }))} className="text-xs font-bold nm-ink self-center inline-flex items-center gap-1" aria-expanded={open}>
+                            {open ? <>عرض أقل <ChevronUp size={14} /></> : <>عرض كل المنتجات ({rows.length}) <ChevronDown size={14} /></>}
+                          </button>
+                        )}
+                      </>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          )}
+          {sellerList.length > sumCount && (
+            <button onClick={() => setSumCount((n) => n + 10)} className="nm-btn ink self-center !py-2 !px-4 text-[13px]">عرض المزيد ({sellerList.length - sumCount} باقي)</button>
           )}
         </>
       )}
 
-      {tab === "summary" && (
-        <>
-          <select className={inputCls + " sm:w-64"} value={summaryFilter} onChange={(e) => setSummaryFilter(e.target.value)}>
-            <option value="all">كل البائعين</option>
-            {accounts.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
-          </select>
-          <div className="grid md:grid-cols-2 gap-3">
-            {summaryAccounts.map(({ user, rows, allocated, remaining }) => (
-              <Card key={user.id} className="p-4">
-                <div className="flex items-center justify-between mb-3 gap-2">
-                  <p className="font-bold flex items-center gap-1.5">
-                    {user.name}
-                    <span className="text-[9px] font-bold px-1.5 py-0.5 rounded-full bg-[var(--surface-3)] text-[var(--muted)]">{user.role === "admin" ? "مدير" : "بائع"}</span>
-                  </p>
-                  <p className="text-xs text-[var(--muted)]">بحوزته <b className="text-[var(--text)]">{remaining}</b> · باع <b className="text-[var(--text)]">{allocated - remaining}</b></p>
-                </div>
-                {rows.length === 0 ? (
-                  <p className="text-xs text-[var(--muted)]">لا توجد حصص مخصصة لهذا البائع</p>
-                ) : (
-                  <table className="w-full text-xs">
-                    <thead>
-                      <tr className="text-[var(--muted)] border-b border-[var(--border)]">
-                        <th className="text-right font-semibold py-1.5">المنتج</th>
-                        <th className="font-semibold py-1.5">استلم</th>
-                        <th className="font-semibold py-1.5">باع</th>
-                        <th className="font-semibold py-1.5">بحوزته</th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {rows.map((a) => (
-                        <tr key={a.id} className="border-b border-[var(--border)] last:border-0">
-                          <td className="py-1.5 font-semibold">{a.productName}</td>
-                          <td className="py-1.5 text-center">{a.allocated}</td>
-                          <td className="py-1.5 text-center">{a.allocated - a.remaining}</td>
-                          <td className={`py-1.5 text-center font-bold ${a.remaining <= 0 ? "text-[#B23A3A]" : "text-[#3F7D57]"}`}>{a.remaining}</td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                )}
-              </Card>
-            ))}
-          </div>
-        </>
-      )}
-
+      {/* ============ 3 — log ============ */}
       {tab === "log" && (
         <>
-          <div className="flex flex-col sm:flex-row gap-2">
-            <select className={inputCls + " sm:w-56"} value={logAccount} onChange={(e) => setLogAccount(e.target.value)}>
-              <option value="all">كل البائعين</option>
-              {accounts.map((u) => <option key={u.id} value={u.id}>{u.name}</option>)}
-            </select>
-            <select className={inputCls + " sm:w-56"} value={logProduct} onChange={(e) => setLogProduct(e.target.value)}>
-              <option value="all">كل المنتجات</option>
-              {loggedProducts.map(([id, name]) => <option key={id} value={id}>{name}</option>)}
-            </select>
+          <div className="nm-well px-2 py-3 grid grid-cols-3 text-center" aria-label="ملخص الحركات">
+            <div><p className="text-[10.5px] nm-mut">الحركات</p><p className="nm-num font-bold">{logList.length}</p></div>
+            <div className="border-x border-[var(--border)]"><p className="text-[10.5px] nm-mut">أُضيف للحصص</p><p className="nm-num font-bold text-[var(--ok)]">+{logAdded}</p></div>
+            <div><p className="text-[10.5px] nm-mut">خرج من الحصص</p><p className="nm-num font-bold text-[var(--bad)]">−{logTaken}</p></div>
+          </div>
+          <div className="grid grid-cols-2 gap-3">
+            <OptionPicker
+              options={accounts.map((u) => ({ id: u.id, name: u.name, sub: u.role === "admin" ? "مدير" : "بائع" }))}
+              value={logAccount}
+              onChange={(v) => { setLogAccount(v); setLogCount(60); }}
+              label="البائع"
+              allLabel="كل البائعين"
+              title="تصفية حسب البائع"
+              searchPlaceholder={`ابحث بالاسم بين ${accounts.length} بائعاً...`}
+            />
+            <OptionPicker
+              options={loggedProducts}
+              value={logProduct}
+              onChange={(v) => { setLogProduct(v); setLogCount(60); }}
+              label="المنتج"
+              allLabel="كل المنتجات"
+              title="تصفية حسب المنتج"
+              icon={Package}
+              searchPlaceholder="بحث عن منتج..."
+            />
           </div>
           {logList.length === 0 ? (
-            <Card className="p-8"><EmptyState text="لا توجد حركات مسجّلة بعد" /></Card>
+            <div className="nm-well p-8"><EmptyState text={allocationLog.length === 0 ? "لا توجد حركات مسجّلة بعد" : "لا توجد حركات مطابقة"} /></div>
           ) : (
-            <div className="space-y-2">
-              {logList.slice(0, 200).map((e) => <AllocationLogRow key={e.id} e={e} />)}
-            </div>
+            <AllocationLogList entries={logList.slice(0, logCount)} />
+          )}
+          {logList.length > logCount && (
+            <button onClick={() => setLogCount((n) => n + 60)} className="nm-btn ink self-center !py-2 !px-4 text-[13px]">عرض المزيد ({logList.length - logCount} باقي)</button>
           )}
         </>
       )}
