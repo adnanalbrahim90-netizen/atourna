@@ -10,7 +10,7 @@ import {
   Trophy, Palette, Medal, Target, Flame, Award, Sparkles, Grid3x3,
   History, LogIn, ShieldAlert, Edit3, ScrollText,
   Boxes, ArrowLeftRight, PackageCheck, Minus, Send, ChevronUp, ChevronDown,
-  ChevronLeft, ChevronRight, LayoutGrid
+  ChevronLeft, ChevronRight, LayoutGrid, Building2, Phone, MapPin
 } from "lucide-react";
 import {
   BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, CartesianGrid,
@@ -1123,7 +1123,7 @@ export default function App() {
   const [fontScale, setFontScaleState] = useState(1);
   const [toast, setToast] = useState("");
   const [confirmState, setConfirmState] = useState(null); // { message, onConfirm }
-  const [allocDirty, setAllocDirty] = useState(false); // unsaved distribution edits → the save bar replaces the sell knob
+  const [pageDirty, setPageDirty] = useState(false); // a page with unsaved edits shows its save bar where the sell knob sits
   const sidebarRef = useRef(null); // desktop sidebar's scrollable nav list, for the up/down scroll buttons
   const mobileNavRef = useRef(null); // same, for the mobile nav drawer
   const pushActiveRef = useRef(false); // true once real push notifications are active on this device
@@ -2225,7 +2225,7 @@ export default function App() {
                 logActivity(currentUser, "تعديل توزيع المخزون", note || "");
               }}
               onConfirm={askConfirm}
-              onDirtyChange={setAllocDirty}
+              onDirtyChange={setPageDirty}
             />
           )}
           {view === "announcements" && (
@@ -2315,7 +2315,7 @@ export default function App() {
             <ActivityLogPage log={activityLog} users={users} />
           )}
           {view === "settings" && isAdmin && (
-            <SettingsPage settings={settings} onSave={async (next) => { await persistSettings(next); showToast("تم حفظ الإعدادات"); }} fontScale={fontScale} onSetFontScale={setFontScale} />
+            <SettingsPage settings={settings} onSave={async (next) => { await persistSettings(next); showToast("تم حفظ الإعدادات"); }} fontScale={fontScale} onSetFontScale={setFontScale} personalTheme={personalTheme} onClearPersonalTheme={() => setPersonalTheme("")} onDirtyChange={setPageDirty} />
           )}
           {view === "backup" && isAdmin && (
             <BackupPage
@@ -2380,7 +2380,7 @@ export default function App() {
       </div>
 
       {/* Floating sell knob — present everywhere except while selling */}
-      {view !== "newsale" && !(view === "allocations" && allocDirty) && (
+      {view !== "newsale" && !pageDirty && (
         <>
           <div className="no-print nm-fabfade" aria-hidden="true" />
           <button className="no-print nm-fab" onClick={() => setView("newsale")} aria-label="بيع جديد">
@@ -6761,123 +6761,292 @@ function CapitalPartnersPage({
   );
 }
 
-function SettingsPage({ settings, onSave, fontScale, onSetFontScale }) {
+const FONT_STEPS = [
+  { scale: 0.9, label: "صغير" },
+  { scale: 1, label: "عادي" },
+  { scale: 1.1, label: "كبير" },
+  { scale: 1.25, label: "أكبر" },
+];
+const themeName = (t) => (t.key === "classic" ? "فيروزي" : t.label);
+const SETTINGS_KEYS = ["companyName", "phone", "address", "logo", "theme", "taxEnabled", "taxRate", "taxLabel"];
+const settingsValue = (o, k) => (k === "theme" ? o.theme || "classic" : k === "taxEnabled" ? !!o.taxEnabled : String(o[k] ?? ""));
+
+function SettingsHead({ icon: Icon, title, sub, id }) {
+  return (
+    <div className="flex items-center gap-3 min-w-0">
+      <span className="nm-knob" style={{ boxShadow: "var(--nm-in-sm)" }} aria-hidden="true"><Icon size={17} className="nm-ink" /></span>
+      <div className="min-w-0">
+        <h3 id={id} className="font-bold leading-tight">{title}</h3>
+        <p className="text-[11.5px] nm-mut leading-snug mt-0.5">{sub}</p>
+      </div>
+    </div>
+  );
+}
+
+function SettingsField({ icon: Icon, label, ...props }) {
+  return (
+    <label className="block">
+      <span className="block text-xs font-semibold nm-mut mb-1.5">{label}</span>
+      <span className="relative block">
+        <Icon size={16} className="absolute right-3.5 top-1/2 -translate-y-1/2 nm-mut pointer-events-none" aria-hidden="true" />
+        <input className={inputCls + " pr-10"} {...props} />
+      </span>
+    </label>
+  );
+}
+
+function SettingsPage({ settings, onSave, fontScale, onSetFontScale, personalTheme = "", onClearPersonalTheme, onDirtyChange }) {
   const [form, setForm] = useState(settings);
+  const [error, setError] = useState("");
   const fileRef = useRef(null);
+
+  const dirty = SETTINGS_KEYS.some((k) => settingsValue(form, k) !== settingsValue(settings, k));
+  const dirtyRef = useRef(dirty);
+  dirtyRef.current = dirty;
+  // Settings can arrive (or be synced) after the page opened: follow them,
+  // but never overwrite edits that haven't been saved yet.
+  useEffect(() => { if (!dirtyRef.current) setForm(settings); }, [settings]);
+
+  useEffect(() => {
+    if (onDirtyChange) onDirtyChange(dirty);
+    return () => { if (onDirtyChange) onDirtyChange(false); };
+  }, [dirty]); // eslint-disable-line
+
+  // Live preview: picking a colour recolours the whole app straight away;
+  // leaving the page without saving puts the real colour back.
+  const savedTheme = settings.theme || "classic";
+  const formTheme = form.theme || "classic";
+  const restoreRef = useRef("");
+  restoreRef.current = personalTheme || savedTheme;
+  useEffect(() => {
+    document.documentElement.setAttribute("data-theme", formTheme !== savedTheme ? formTheme : personalTheme || savedTheme);
+  }, [formTheme, savedTheme, personalTheme]);
+  useEffect(() => () => { document.documentElement.setAttribute("data-theme", restoreRef.current); }, []);
+
+  const set = (patch) => { setForm((f) => ({ ...f, ...patch })); setError(""); };
 
   const handleLogo = (e) => {
     const file = e.target.files?.[0];
     if (!file) return;
     const reader = new FileReader();
-    reader.onload = () => setForm((f) => ({ ...f, logo: reader.result }));
+    reader.onload = () => set({ logo: reader.result });
     reader.readAsDataURL(file);
+    e.target.value = "";
+  };
+
+  const save = () => {
+    const name = (form.companyName || "").trim();
+    if (!name) { setError("اكتب اسم الشركة أولاً — يظهر في رأس كل فاتورة"); return; }
+    const rate = Number(form.taxRate);
+    if (form.taxEnabled && (!Number.isFinite(rate) || rate < 0 || rate > 100)) { setError("نسبة الضريبة يجب أن تكون بين 0 و 100"); return; }
+    onSave({ ...settings, ...form, companyName: name, taxRate: Number.isFinite(rate) ? rate : 0 });
+    setError("");
+  };
+  const undo = () => { setForm(settings); setError(""); };
+
+  const fontIdx = Math.max(0, FONT_STEPS.findIndex((o) => o.scale === fontScale));
+  const knownScale = FONT_STEPS.some((o) => o.scale === fontScale);
+  const taxRate = Number(form.taxRate) || 0;
+  const personal = personalTheme ? THEMES.find((t) => t.key === personalTheme) : null;
+
+  const swatch = (t) => {
+    const on = formTheme === t.key;
+    return (
+      <button
+        key={t.key}
+        type="button"
+        role="radio"
+        aria-checked={on}
+        onClick={() => set({ theme: t.key })}
+        className={`rounded-2xl px-2 py-3 flex flex-col items-center gap-2 transition ${on ? "nm-in-sm" : "nm-out-sm"}`}
+      >
+        <span className="relative w-11 h-11 rounded-full grid place-items-center" style={{ background: `linear-gradient(135deg, ${t.accent} 0 50%, ${t.dark} 50% 100%)`, boxShadow: "inset 0 0 0 3px var(--bg), var(--nm-out-sm)" }} aria-hidden="true">
+          {on && <Check size={18} strokeWidth={3} style={{ color: "#fff" }} />}
+        </span>
+        <span className="leading-tight text-center">
+          <span className={`block text-[12px] ${on ? "font-bold nm-ink" : "font-semibold"}`}>{themeName(t)}</span>
+          {t.key === "classic" && <span className="block text-[10px] nm-mut">الأساسي</span>}
+        </span>
+      </button>
+    );
   };
 
   return (
-    <div className="space-y-5 max-w-xl">
-      <h2 className="text-xl font-bold">إعدادات الشركة</h2>
-      <Card className="p-4 space-y-4">
-        <Field label="اسم الشركة / النشاط">
-          <input className={inputCls} value={form.companyName} onChange={(e) => setForm({ ...form, companyName: e.target.value })} />
-        </Field>
-        <Field label="رقم الهاتف">
-          <input className={inputCls} value={form.phone} onChange={(e) => setForm({ ...form, phone: e.target.value })} />
-        </Field>
-        <Field label="العنوان">
-          <input className={inputCls} value={form.address} onChange={(e) => setForm({ ...form, address: e.target.value })} />
-        </Field>
-        <div>
-          <span className="block text-xs font-semibold text-[var(--muted)] mb-2">شعار الشركة (Logo)</span>
-          <div className="flex items-center gap-3">
+    <div className="flex flex-col gap-5 max-w-xl mx-auto">
+      <div>
+        <h2 className="text-xl font-bold">إعدادات الشركة</h2>
+        <p className="text-sm nm-mut">تظهر في الفواتير وعند جميع المستخدمين</p>
+      </div>
+
+      {/* 1 — identity */}
+      <section className="nm-card p-4 flex flex-col gap-4" aria-labelledby="set-id">
+        <SettingsHead id="set-id" icon={Building2} title="هوية الشركة" sub="تظهر في رأس كل فاتورة مطبوعة" />
+
+        <figure className="m-0 flex flex-col gap-2">
+          <div className="nm-well p-3.5 flex items-center gap-3" aria-label="معاينة رأس الفاتورة">
             {form.logo ? (
-              <img src={form.logo} alt="logo" className="w-16 h-16 rounded-xl object-cover border border-[var(--border)]" />
+              <img src={form.logo} alt="شعار الشركة" className="w-14 h-14 rounded-xl object-contain bg-white shrink-0" />
             ) : (
-              <div className="w-16 h-16 rounded-xl bg-[var(--surface-2)] border border-dashed border-[var(--border)] flex items-center justify-center text-[var(--muted)]">
-                <ImageIcon size={22} />
-              </div>
+              <span className="w-14 h-14 rounded-xl grid place-items-center nm-mut shrink-0" style={{ boxShadow: "var(--nm-in-sm)" }}><ImageIcon size={20} /></span>
             )}
-            <input ref={fileRef} type="file" accept="image/*" onChange={handleLogo} className="hidden" />
-            <Btn variant="outline" onClick={() => fileRef.current?.click()}><Upload size={16} /> رفع شعار</Btn>
-            {form.logo && <Btn variant="ghost" onClick={() => setForm({ ...form, logo: "" })}>إزالة</Btn>}
-          </div>
-        </div>
-
-        <div>
-          <span className="block text-xs font-semibold text-[var(--muted)] mb-2">ثيم ألوان الموقع</span>
-          <div className="grid grid-cols-3 gap-2">
-            {THEMES.map((t) => (
-              <button
-                key={t.key}
-                type="button"
-                onClick={() => setForm({ ...form, theme: t.key })}
-                className={`rounded-xl border-2 p-2.5 flex flex-col items-center gap-1.5 transition ${
-                  (form.theme || "classic") === t.key ? "border-[var(--accent)]" : "border-transparent"
-                }`}
-                style={{ background: "var(--surface-2)" }}
-              >
-                <span className="flex gap-1">
-                  <span className="w-5 h-5 rounded-full" style={{ background: t.accent }} />
-                  <span className="w-5 h-5 rounded-full" style={{ background: t.dark }} />
-                </span>
-                <span className="text-[11px] font-semibold">{t.label}</span>
-              </button>
-            ))}
-          </div>
-        </div>
-
-        <div className="pt-3 border-t border-[var(--border)]">
-          <span className="text-xs font-semibold text-[var(--muted)] flex items-center gap-1.5 mb-2"><Type size={14} /> حجم الخط (على هذا الجهاز فقط)</span>
-          <div className="grid grid-cols-4 gap-2">
-            {[
-              { scale: 0.9, label: "صغير" },
-              { scale: 1, label: "عادي" },
-              { scale: 1.1, label: "كبير" },
-              { scale: 1.25, label: "أكبر" },
-            ].map((o) => (
-              <button
-                key={o.scale}
-                type="button"
-                onClick={() => onSetFontScale(o.scale)}
-                className={`rounded-xl border-2 py-2.5 flex flex-col items-center gap-1 transition ${
-                  fontScale === o.scale ? "border-[var(--accent)]" : "border-transparent"
-                }`}
-                style={{ background: "var(--surface-2)" }}
-              >
-                <span className="font-extrabold" style={{ fontSize: `${14 * o.scale}px` }}>أ</span>
-                <span className="text-[10px] font-semibold">{o.label}</span>
-              </button>
-            ))}
-          </div>
-          <p className="text-[11px] text-[var(--muted)] mt-2">يتحكم بحجم النصوص والأرقام بكامل التطبيق على جهازك أنت فقط، ولا يؤثر على أجهزة بقية المستخدمين.</p>
-        </div>
-
-        <div className="pt-3 border-t border-[var(--border)]">
-          <div className="flex items-center justify-between mb-2">
-            <span className="text-xs font-semibold text-[var(--muted)] flex items-center gap-1.5"><Percent size={14} /> نظام الضريبة (تجهيز مسبق)</span>
-            <button
-              type="button"
-              onClick={() => setForm({ ...form, taxEnabled: !form.taxEnabled })}
-              className={`w-11 h-6 rounded-full relative transition ${form.taxEnabled ? "bg-[var(--accent)]" : "bg-[var(--border)]"}`}
-            >
-              <span className={`absolute top-0.5 w-5 h-5 rounded-full bg-white shadow transition-all ${form.taxEnabled ? "right-0.5" : "right-5"}`} />
-            </button>
-          </div>
-          <p className="text-[11px] text-[var(--muted)] mb-3">جهّزنا هذا النظام لتطبيق الضريبة عند إقرارها مستقبلاً في دولة الكويت. فعّله فقط عند الحاجة الفعلية.</p>
-          {form.taxEnabled && (
-            <div className="grid grid-cols-2 gap-3">
-              <Field label="اسم الضريبة">
-                <input className={inputCls} value={form.taxLabel} onChange={(e) => setForm({ ...form, taxLabel: e.target.value })} />
-              </Field>
-              <Field label="نسبة الضريبة (%)">
-                <input type="number" min="0" max="100" step="0.1" className={inputCls} value={form.taxRate} onChange={(e) => setForm({ ...form, taxRate: Number(e.target.value) })} />
-              </Field>
+            <div className="flex-1 min-w-0">
+              <p className="font-bold leading-snug break-words">{(form.companyName || "").trim() || <span className="nm-mut">اسم الشركة</span>}</p>
+              {form.phone && <p className="text-[11px] nm-mut leading-snug" dir="ltr" style={{ textAlign: "right" }}>{form.phone}</p>}
+              {form.address && <p className="text-[11px] nm-mut leading-snug">{form.address}</p>}
             </div>
+          </div>
+          <figcaption className="text-[11px] nm-mut text-center">هكذا يظهر رأس الفاتورة</figcaption>
+        </figure>
+
+        <SettingsField icon={Building2} label="اسم الشركة / النشاط" value={form.companyName || ""} onChange={(e) => set({ companyName: e.target.value })} placeholder="مثال: أطياب الصحراء" />
+        <div className="grid sm:grid-cols-2 gap-4">
+          <SettingsField icon={Phone} label="رقم الهاتف" type="tel" inputMode="tel" dir="ltr" style={{ textAlign: "right" }} value={form.phone || ""} onChange={(e) => set({ phone: e.target.value })} placeholder="5000 0000" />
+          <SettingsField icon={MapPin} label="العنوان" value={form.address || ""} onChange={(e) => set({ address: e.target.value })} placeholder="المنطقة، الشارع، المجمع" />
+        </div>
+
+        <div className="flex items-center gap-4 pt-1">
+          <div className="flex-1 min-w-0">
+            <p className="text-xs font-semibold nm-mut">شعار الشركة (Logo)</p>
+            <p className="text-[11px] nm-mut leading-snug mt-0.5">صورة مربعة بخلفية فاتحة تظهر بأوضح شكل في الفاتورة</p>
+          </div>
+          <input ref={fileRef} type="file" accept="image/*" onChange={handleLogo} className="hidden" />
+          <button type="button" className="nm-act" onClick={() => fileRef.current?.click()}>
+            <span className="nm-knob"><Upload size={17} /></span>
+            {form.logo ? "تغيير" : "رفع شعار"}
+          </button>
+          {form.logo && (
+            <button type="button" className="nm-act" onClick={() => set({ logo: "" })}>
+              <span className="nm-knob danger"><Trash2 size={17} /></span>
+              إزالة
+            </button>
           )}
         </div>
+      </section>
 
-        <Btn onClick={() => onSave(form)} className="w-full"><Save size={16} /> حفظ الإعدادات</Btn>
-      </Card>
-      <p className="text-xs text-[var(--muted)]">سيظهر اسم الشركة والشعار تلقائياً في جميع الفواتير المطبوعة. تغيير الثيم يطبَّق على واجهة الموقع لجميع المستخدمين.</p>
+      {/* 2 — colours */}
+      <section className="nm-card p-4 flex flex-col gap-4" aria-labelledby="set-color">
+        <SettingsHead id="set-color" icon={Palette} title="ألوان التطبيق" sub="لون الأزرار والقيم المهمة عند جميع المستخدمين" />
+        {personal && (
+          <div className="nm-well p-3 text-[11.5px] leading-relaxed flex items-start gap-2">
+            <Eye size={15} className="nm-ink shrink-0 mt-0.5" />
+            <p className="flex-1">جهازك يستخدم لوناً شخصياً «{themeName(personal)}» من «تفضيلاتي»، فلا يظهر لك لون الشركة إلا أثناء المعاينة هنا.{" "}
+              {onClearPersonalTheme && <button type="button" className="font-bold nm-ink underline underline-offset-2" onClick={onClearPersonalTheme}>استخدم لون الشركة</button>}
+            </p>
+          </div>
+        )}
+        <div>
+          <p className="text-xs font-semibold nm-mut mb-2.5">ألوان هادئة</p>
+          <div className="grid grid-cols-3 gap-3" role="radiogroup" aria-label="ألوان هادئة">{THEMES.filter((t) => !t.vivid).map(swatch)}</div>
+        </div>
+        <div>
+          <p className="text-xs font-semibold nm-mut mb-2.5">ألوان حيوية</p>
+          <div className="grid grid-cols-3 gap-3" role="radiogroup" aria-label="ألوان حيوية">{THEMES.filter((t) => t.vivid).map(swatch)}</div>
+        </div>
+        <p className="text-[11px] nm-mut leading-relaxed">
+          {formTheme !== savedTheme
+            ? <>تشاهد الآن «{themeName(THEMES.find((t) => t.key === formTheme) || THEMES[0])}» على الشاشة كلها. اضغط «حفظ» ليُعتمد لجميع المستخدمين، أو تراجع للعودة إلى «{themeName(THEMES.find((t) => t.key === savedTheme) || THEMES[0])}».</>
+            : "اختر لوناً لتراه فوراً على الشاشة كلها قبل حفظه."}
+        </p>
+      </section>
+
+      {/* 3 — font size (this device) */}
+      <section className="nm-card p-4 flex flex-col gap-4" aria-labelledby="set-font">
+        <div className="flex items-start justify-between gap-3">
+          <SettingsHead id="set-font" icon={Type} title="حجم الخط" sub="يُطبَّق فوراً على التطبيق كله" />
+          <span className="nm-pill info shrink-0">على هذا الجهاز فقط</span>
+        </div>
+
+        <div className="nm-well px-4 py-3.5" aria-hidden="true">
+          <p className="text-[11px] nm-mut">عيّنة</p>
+          <p className="font-bold text-base leading-snug">{(form.companyName || "").trim() || "أطياب الصحراء"}</p>
+          <p className="text-sm nm-mut">فاتورة INV-00071 · Nébuleuse × 2</p>
+          <p className="nm-num text-xl font-bold nm-ink mt-1">20.000 <span className="text-xs font-semibold nm-mut">د.ك</span></p>
+        </div>
+
+        <div className="flex items-center gap-3">
+          <button type="button" className="nm-knob" onClick={() => onSetFontScale(FONT_STEPS[Math.max(0, fontIdx - 1)].scale)} disabled={knownScale && fontIdx === 0} aria-label="تصغير الخط">
+            <span className="font-bold" style={{ fontSize: 13 }}>أ</span>
+          </button>
+          <div className="flex-1 min-w-0 flex flex-col gap-2">
+            <div className="nm-in-sm rounded-full h-12 relative grid grid-cols-4 items-center px-1.5" role="radiogroup" aria-label="حجم الخط">
+              <span className="absolute top-1.5 bottom-1.5 right-1.5 rounded-full transition-all duration-300" style={{ width: `calc((100% - 12px) * ${(fontIdx + 0.5) / 4} + 18px)`, background: "color-mix(in srgb, var(--accent) 16%, transparent)" }} aria-hidden="true" />
+              {FONT_STEPS.map((o, i) => {
+                const on = knownScale && i === fontIdx;
+                return (
+                  <button key={o.scale} type="button" role="radio" aria-checked={on} aria-label={`${o.label} ${Math.round(o.scale * 100)}٪`} onClick={() => onSetFontScale(o.scale)} className="relative h-full grid place-items-center">
+                    {on ? (
+                      <span className="nm-knob sm nm-ink"><span className="font-bold" style={{ fontSize: Math.round(13 * o.scale) }}>أ</span></span>
+                    ) : (
+                      <span className="w-2 h-2 rounded-full" style={{ background: i < fontIdx ? "var(--accent)" : "var(--faint)" }} />
+                    )}
+                  </button>
+                );
+              })}
+            </div>
+            <div className="grid grid-cols-4 text-center px-1.5" aria-hidden="true">
+              {FONT_STEPS.map((o, i) => (
+                <span key={o.scale} className={`text-[11px] leading-tight ${knownScale && i === fontIdx ? "font-bold nm-ink" : "nm-mut"}`}>
+                  {o.label}<br /><span className="nm-num text-[10px]">{Math.round(o.scale * 100)}%</span>
+                </span>
+              ))}
+            </div>
+          </div>
+          <button type="button" className="nm-knob" onClick={() => onSetFontScale(FONT_STEPS[Math.min(FONT_STEPS.length - 1, fontIdx + 1)].scale)} disabled={knownScale && fontIdx === FONT_STEPS.length - 1} aria-label="تكبير الخط">
+            <span className="font-bold" style={{ fontSize: 20 }}>أ</span>
+          </button>
+        </div>
+        <p className="text-[11px] nm-mut leading-relaxed">لا يحتاج حفظاً ولا يؤثر على أجهزة بقية المستخدمين. لتغيير اللون على جهازك وحدك استخدم «تفضيلاتي».</p>
+      </section>
+
+      {/* 4 — tax */}
+      <section className="nm-card p-4 flex flex-col gap-4" aria-labelledby="set-tax">
+        <div className="flex items-center justify-between gap-3">
+          <SettingsHead id="set-tax" icon={Percent} title="الضريبة" sub="مجهّزة مسبقاً — فعّلها فقط عند إقرارها في الكويت" />
+          <button type="button" role="switch" aria-checked={!!form.taxEnabled} aria-labelledby="set-tax" onClick={() => set({ taxEnabled: !form.taxEnabled })} className={`nm-switch ${form.taxEnabled ? "is-on" : ""}`} />
+        </div>
+        {form.taxEnabled ? (
+          <>
+            <div className="grid grid-cols-2 gap-3">
+              <Field label="اسم الضريبة">
+                <input className={inputCls} value={form.taxLabel || ""} onChange={(e) => set({ taxLabel: e.target.value })} />
+              </Field>
+              <Field label="النسبة (%)">
+                <input type="number" inputMode="decimal" min="0" max="100" step="0.1" dir="ltr" className={inputCls + " text-right nm-num"} value={form.taxRate ?? ""} onChange={(e) => set({ taxRate: e.target.value })} />
+              </Field>
+            </div>
+            <div className="nm-well px-3 py-2.5 grid grid-cols-3 text-center" aria-label="مثال على فاتورة">
+              <div><p className="text-[10.5px] nm-mut">فاتورة</p><p className="nm-num font-bold text-sm">10.000</p></div>
+              <div className="border-x border-[var(--border)]"><p className="text-[10.5px] nm-mut">الضريبة {taxRate}%</p><p className="nm-num font-bold text-sm text-[var(--due)]">+{fmt(10 * taxRate / 100)}</p></div>
+              <div><p className="text-[10.5px] nm-mut">الإجمالي</p><p className="nm-num font-bold text-sm nm-ink">{fmt(10 + 10 * taxRate / 100)}</p></div>
+            </div>
+          </>
+        ) : (
+          <p className="text-[11.5px] nm-mut">متوقفة: الفواتير تُصدر بدون ضريبة.</p>
+        )}
+      </section>
+
+      {!dirty && (
+        <p className="text-xs nm-mut text-center flex items-center justify-center gap-1.5"><Check size={14} className="text-[var(--ok)]" /> كل الإعدادات محفوظة</p>
+      )}
+
+      {dirty && (
+        <div className="no-print fixed inset-x-0 z-40 px-4 flex justify-center" style={{ bottom: "calc(16px + env(safe-area-inset-bottom, 0px))" }}>
+          <div className="nm-out nm-pop rounded-full w-full max-w-xl flex items-center gap-2 p-2 pr-4 fade-in" role="status">
+            <div className="flex-1 min-w-0 leading-tight">
+              {error ? (
+                <p className="text-[12px] font-bold text-[var(--bad)]" role="alert">{error}</p>
+              ) : (
+                <>
+                  <p className="text-[11px] nm-mut">تغييرات غير محفوظة</p>
+                  <p className="text-sm font-bold truncate">لجميع المستخدمين</p>
+                </>
+              )}
+            </div>
+            <button type="button" className="nm-knob sm" onClick={undo} aria-label="تراجع عن التغييرات"><X size={15} /></button>
+            <button type="button" className="nm-btn solid !py-2.5 !px-5 text-sm" onClick={save}><Save size={16} /> حفظ</button>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
